@@ -16,10 +16,11 @@ import androidx.glance.appwidget.provideContent
 import androidx.glance.layout.*
 import androidx.glance.text.*
 import androidx.glance.unit.ColorProvider
-import androidx.room.Room
+import com.mark.babylog.BabyLogApp
 import com.mark.babylog.MainActivity
 import com.mark.babylog.R
 import com.mark.babylog.data.*
+import com.mark.babylog.sync.AppSurfaceSync
 
 data class WidgetButton(val label:String,val command:String)
 data class WidgetUi(val title:String,val status:String,val timerStartedAt:Long?=null,val buttons:List<WidgetButton>)
@@ -32,25 +33,33 @@ fun feedingWidgetUi(active:BabyEvent?,last:BabyEvent?,now:Long):WidgetUi {
 
 fun sleepWidgetUi(active:BabyEvent?,now:Long):WidgetUi {
     val running=active?.takeIf{it.type==EventType.SLEEP}
-    val buttons=listOf(SleepPosition.BACK to "На спине",SleepPosition.LEFT to "Левый бок",SleepPosition.RIGHT to "Правый бок").map{(position,label)->WidgetButton(if(running?.detail==position.name)"■ Стоп" else label,if(running?.detail==position.name)"STOP" else position.name)}
+    val buttons=listOf(SleepPosition.LEFT to "Лево",SleepPosition.RIGHT to "Право",SleepPosition.OTHER to "Другое").map{(position,label)->WidgetButton(if(running?.detail==position.name||(position==SleepPosition.OTHER&&running?.detail=="BACK"))"■ Стоп" else label,if(running?.detail==position.name||(position==SleepPosition.OTHER&&running?.detail=="BACK"))"STOP" else position.name)}
     return WidgetUi("Сон",if(running!=null)"Спит · ${sleepLabel(running.detail)}" else "Сон не идёт",running?.startedAt,buttons)
 }
 
 private val kindKey=ActionParameters.Key<String>("kind")
-private suspend fun dao(context:Context)=Room.databaseBuilder(context,BabyDatabase::class.java,"baby-log.db").build().events()
-private suspend fun updateWidgets(context:Context){FeedingWidget().updateAll(context);SleepWidget().updateAll(context)}
+private fun dao(context:Context)=(context.applicationContext as BabyLogApp).database.events()
 
-class FeedAction:ActionCallback { override suspend fun onAction(context:Context,glanceId:GlanceId,parameters:ActionParameters){val d=dao(context);val command=parameters[kindKey]?:"BOTTLE";if(command=="STOP"){if(d.active()?.type==EventType.FEEDING)d.stopActive(System.currentTimeMillis())}else d.startFeeding(FeedingKind.valueOf(command),System.currentTimeMillis());updateWidgets(context)} }
-class SleepAction:ActionCallback { override suspend fun onAction(context:Context,glanceId:GlanceId,parameters:ActionParameters){val d=dao(context);val command=parameters[kindKey]?:"BACK";if(command=="STOP"){if(d.active()?.type==EventType.SLEEP)d.stopActive(System.currentTimeMillis())}else d.startSleep(SleepPosition.valueOf(command),System.currentTimeMillis());updateWidgets(context)} }
+class FeedAction:ActionCallback { override suspend fun onAction(context:Context,glanceId:GlanceId,parameters:ActionParameters){val d=dao(context);val command=parameters[kindKey]?:"BOTTLE";if(command=="STOP"){if(d.active()?.type==EventType.FEEDING)d.stopActive(System.currentTimeMillis())}else d.startFeeding(FeedingKind.valueOf(command),System.currentTimeMillis());AppSurfaceSync.refresh(context)} }
+class SleepAction:ActionCallback { override suspend fun onAction(context:Context,glanceId:GlanceId,parameters:ActionParameters){val d=dao(context);val command=parameters[kindKey]?:"OTHER";if(command=="STOP"){if(d.active()?.type==EventType.SLEEP)d.stopActive(System.currentTimeMillis())}else d.startSleep(SleepPosition.valueOf(command),System.currentTimeMillis());AppSurfaceSync.refresh(context)} }
 
-class FeedingWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val now=System.currentTimeMillis();val ui=feedingWidgetUi(d.active(),d.lastFeed(),now);provideContent{WidgetBox(context,ui,now,FeedAction::class.java)}}}
+class FeedingWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val now=System.currentTimeMillis();val ui=feedingWidgetUi(d.active(),d.lastFeed(),now);provideContent{StandardWidgetBox(context,ui,now,FeedAction::class.java)}}}
 class FeedingWidgetReceiver:GlanceAppWidgetReceiver(){override val glanceAppWidget=FeedingWidget()}
-class SleepWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val now=System.currentTimeMillis();val ui=sleepWidgetUi(d.active(),now);provideContent{WidgetBox(context,ui,now,SleepAction::class.java)}}}
+class SleepWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val now=System.currentTimeMillis();val ui=sleepWidgetUi(d.active(),now);provideContent{StandardWidgetBox(context,ui,now,SleepAction::class.java)}}}
 class SleepWidgetReceiver:GlanceAppWidgetReceiver(){override val glanceAppWidget=SleepWidget()}
+class FeedingHorizontalWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val now=System.currentTimeMillis();val ui=feedingWidgetUi(d.active(),d.lastFeed(),now);provideContent{HorizontalWidgetBox(context,ui,now,FeedAction::class.java)}}}
+class FeedingHorizontalWidgetReceiver:GlanceAppWidgetReceiver(){override val glanceAppWidget=FeedingHorizontalWidget()}
+class FeedingMiniWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val active=d.active()?.takeIf{it.type==EventType.FEEDING};val buttons=listOf("LEFT" to "L","RIGHT" to "R","BOTTLE" to "🍼").map{(command,label)->WidgetButton(if(active?.detail==command)"■" else label,if(active?.detail==command)"STOP" else command)};provideContent{MiniWidgetBox(buttons,FeedAction::class.java)}}}
+class FeedingMiniWidgetReceiver:GlanceAppWidgetReceiver(){override val glanceAppWidget=FeedingMiniWidget()}
 
 @OptIn(ExperimentalGlanceRemoteViewsApi::class)
-@Composable private fun WidgetBox(context:Context,ui:WidgetUi,now:Long,action:Class<out ActionCallback>){Column(GlanceModifier.fillMaxSize().background(ColorProvider(Color(0xFFF4EFF7))).clickable(actionStartActivity<MainActivity>()).padding(16.dp)){Text(ui.title,style=TextStyle(fontWeight=FontWeight.Bold,fontSize=20.sp));Text(ui.status,style=TextStyle(fontSize=14.sp));ui.timerStartedAt?.let{started->val remote=RemoteViews(context.packageName,R.layout.widget_chronometer).apply{setChronometer(R.id.widget_chronometer,SystemClock.elapsedRealtime()-(now-started),null,true)};AndroidRemoteViews(remote,GlanceModifier.fillMaxWidth().height(32.dp))}?:Spacer(GlanceModifier.height(8.dp));ui.buttons.forEachIndexed{index,item->if(index>0)Spacer(GlanceModifier.height(7.dp));WidgetButton(item,action,GlanceModifier.fillMaxWidth())}}}
-@Composable private fun WidgetButton(item:WidgetButton,action:Class<out ActionCallback>,modifier:GlanceModifier){Button(item.label,onClick=actionRunCallback(action,actionParametersOf(kindKey to item.command)),modifier=modifier)}
+@Composable private fun StandardWidgetBox(context:Context,ui:WidgetUi,now:Long,action:Class<out ActionCallback>){Column(GlanceModifier.fillMaxSize().background(ColorProvider(Color(0xFFF4EFF7))).clickable(actionStartActivity<MainActivity>()).padding(12.dp)){WidgetHeader(context,ui,now);Row(GlanceModifier.fillMaxWidth()){WidgetButton(ui.buttons[0],action,GlanceModifier.defaultWeight());Spacer(GlanceModifier.width(8.dp));WidgetButton(ui.buttons[1],action,GlanceModifier.defaultWeight())};Spacer(GlanceModifier.height(7.dp));WidgetButton(ui.buttons[2],action,GlanceModifier.fillMaxWidth())}}
+@OptIn(ExperimentalGlanceRemoteViewsApi::class)
+@Composable private fun HorizontalWidgetBox(context:Context,ui:WidgetUi,now:Long,action:Class<out ActionCallback>){Column(GlanceModifier.fillMaxSize().background(ColorProvider(Color(0xFFF4EFF7))).clickable(actionStartActivity<MainActivity>()).padding(12.dp)){WidgetHeader(context,ui,now);Row(GlanceModifier.fillMaxWidth()){ui.buttons.forEachIndexed{index,item->if(index>0)Spacer(GlanceModifier.width(7.dp));WidgetButton(item,action,GlanceModifier.defaultWeight())}}}}
+@Composable private fun MiniWidgetBox(buttons:List<WidgetButton>,action:Class<out ActionCallback>){Row(GlanceModifier.fillMaxSize().background(ColorProvider(Color(0xFFF4EFF7))).clickable(actionStartActivity<MainActivity>()).padding(8.dp)){buttons.forEachIndexed{index,item->if(index>0)Spacer(GlanceModifier.width(6.dp));WidgetButton(item,action,GlanceModifier.defaultWeight())}}}
+@OptIn(ExperimentalGlanceRemoteViewsApi::class)
+@Composable private fun WidgetHeader(context:Context,ui:WidgetUi,now:Long){Text(ui.title,style=TextStyle(fontWeight=FontWeight.Bold,fontSize=18.sp));Text(ui.status,style=TextStyle(fontSize=13.sp));ui.timerStartedAt?.let{started->val remote=RemoteViews(context.packageName,R.layout.widget_chronometer).apply{setChronometer(R.id.widget_chronometer,SystemClock.elapsedRealtime()-(now-started),null,true)};AndroidRemoteViews(remote,GlanceModifier.fillMaxWidth().height(28.dp))}?:Spacer(GlanceModifier.height(6.dp))}
+@Composable private fun WidgetButton(item:WidgetButton,action:Class<out ActionCallback>,modifier:GlanceModifier){Box(modifier.height(42.dp).background(ColorProvider(Color(0xFF6F579C))).cornerRadius(16.dp).clickable(actionRunCallback(action,actionParametersOf(kindKey to item.command))),contentAlignment=Alignment.Center){Text(item.label,style=TextStyle(color=ColorProvider(Color.White),fontWeight=FontWeight.Bold,fontSize=14.sp,textAlign=TextAlign.Center),maxLines=1)}}
 private fun feedLabel(v:String)=when(v){"LEFT"->"левая грудь";"RIGHT"->"правая грудь";else->"бутылочка"}
-private fun sleepLabel(v:String)=when(v){"LEFT"->"левый бок";"RIGHT"->"правый бок";"BACK"->"на спине";else->"другое"}
+private fun sleepLabel(v:String)=when(v){"LEFT"->"голова слева";"RIGHT"->"голова справа";else->"другое"}
 private fun elapsed(ms:Long):String{val total=ms.coerceAtLeast(0)/1000;val h=total/3600;val m=(total%3600)/60;val s=total%60;return if(h>0)"$h:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}" else "$m:${s.toString().padStart(2,'0')}"}

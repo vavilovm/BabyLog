@@ -7,6 +7,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mark.babylog.data.*
+import com.mark.babylog.sync.AppSurfaceSync
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
@@ -22,14 +23,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = (app as BabyLogApp).database.events()
     private val day = MutableStateFlow(LocalDate.now())
     val state = combine(dao.observeAll(), dao.observeSegments(), day) { e, s, d -> UiState(e, s, d) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
+    init { viewModelScope.launch { sync() } }
 
     fun moveDay(delta: Long) { day.value = day.value.plusDays(delta) }
-    fun startFeeding(kind: FeedingKind) = viewModelScope.launch { dao.startFeeding(kind, System.currentTimeMillis()) }
-    fun startSleep(position: SleepPosition) = viewModelScope.launch { dao.startSleep(position, System.currentTimeMillis()) }
-    fun changePosition(position: SleepPosition) = viewModelScope.launch { val a=dao.active() ?: return@launch; if(a.type!=EventType.SLEEP)return@launch; val now=System.currentTimeMillis(); dao.finishSegment(a.id,now); dao.insert(SleepSegment(eventId=a.id,position=position,startedAt=now)); dao.update(a.copy(detail=position.name)) }
-    fun stop() = viewModelScope.launch { dao.stopActive(System.currentTimeMillis()) }
-    fun updateEvent(event: BabyEvent) = viewModelScope.launch { dao.update(event) }
-    fun delete(event: BabyEvent) = viewModelScope.launch { dao.delete(event) }
+    fun startFeeding(kind: FeedingKind) = viewModelScope.launch { dao.startFeeding(kind, System.currentTimeMillis());sync() }
+    fun startSleep(position: SleepPosition) = viewModelScope.launch { dao.startSleep(position, System.currentTimeMillis());sync() }
+    fun changePosition(position: SleepPosition) = viewModelScope.launch { val a=dao.active() ?: return@launch; if(a.type!=EventType.SLEEP)return@launch; val now=System.currentTimeMillis(); dao.finishSegment(a.id,now); dao.insert(SleepSegment(eventId=a.id,position=position,startedAt=now)); dao.update(a.copy(detail=position.name));sync() }
+    fun stop() = viewModelScope.launch { dao.stopActive(System.currentTimeMillis());sync() }
+    fun updateEvent(event: BabyEvent) = viewModelScope.launch { dao.update(event);sync() }
+    fun delete(event: BabyEvent) = viewModelScope.launch { dao.delete(event);sync() }
+    private suspend fun sync()=AppSurfaceSync.refresh(getApplication())
     fun csv(): File {
         val f=File(getApplication<Application>().cacheDir,"babylog.csv")
         f.writeText(buildString { appendLine("type,detail,start,end,duration_minutes"); state.value.events.reversed().forEach { e -> appendLine("${e.type},${e.detail},${iso(e.startedAt)},${e.endedAt?.let(::iso).orEmpty()},${((e.endedAt?:System.currentTimeMillis())-e.startedAt)/60000}") } })

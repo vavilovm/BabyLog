@@ -1,9 +1,15 @@
 package com.mark.babylog
 
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,14 +30,18 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mark.babylog.data.*
+import com.mark.babylog.sync.AppSurfaceSync
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.*
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); enableEdgeToEdge(); setContent { BabyTheme { val vm:MainViewModel=viewModel(); BabyScreen(vm.state.collectAsStateWithLifecycle().value, vm) } } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); enableEdgeToEdge(); setContent { BabyTheme { NotificationPermission();val vm:MainViewModel=viewModel(); BabyScreen(vm.state.collectAsStateWithLifecycle().value, vm) } } }
 }
+
+@Composable private fun NotificationPermission(){val context=LocalContext.current;val scope=rememberCoroutineScope();val launcher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)scope.launch{AppSurfaceSync.refresh(context)}};LaunchedEffect(Unit){if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)launcher.launch(Manifest.permission.POST_NOTIFICATIONS)}}
 
 private val Light = lightColorScheme(primary=Color(0xFF65558F), secondary=Color(0xFF7D5260), surfaceVariant=Color(0xFFE7E0EC))
 private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0xFFEFB8C8), background=Color(0xFF141218), surface=Color(0xFF211F26))
@@ -48,31 +58,30 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
     val active=state.active
     Scaffold(topBar={ TopAppBar(title={Text("BabyLog",fontWeight=FontWeight.Bold)},actions={IconButton(onClick={vm?.shareCsv(context)}){Icon(Icons.Default.FileDownload,"Экспорт CSV")}}) },bottomBar={QuickActions(active,vm)}) { pad ->
         LazyColumn(Modifier.fillMaxSize().padding(pad),contentPadding=PaddingValues(16.dp,8.dp,16.dp,32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            item { StatusCard(active,state.events,now,vm) }
             item { DayHeader(state.selectedDay,{vm?.moveDay(-1)},{vm?.moveDay(1)}) }
             item { Stats(today,state.segments,now) }
             if(today.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp),contentAlignment=Alignment.Center){Text("Сегодня событий пока нет",color=MaterialTheme.colorScheme.onSurfaceVariant)} }
             items(today,key={it.id}) { EventRow(it,now){edit=it} }
-            item { StatusCard(active,state.events,now,vm) }
         }
     }
     edit?.let { original -> EditDialog(original,onDismiss={edit=null},onSave={vm?.updateEvent(it);edit=null},onDelete={vm?.delete(original);edit=null}) }
 }
 
 @Composable private fun QuickActions(active:BabyEvent?,vm:MainViewModel?){
-    var more by remember{mutableStateOf(false)}
     Surface(shadowElevation=12.dp,tonalElevation=3.dp){Column(Modifier.navigationBarsPadding().padding(12.dp,10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Text("Быстрые действия",fontWeight=FontWeight.Bold)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="LEFT")"Стоп" else "Левая",if(active?.type==EventType.FEEDING&&active.detail=="LEFT")Icons.Default.Stop else Icons.Default.ArrowBack,Modifier.weight(1f)){if(active?.type==EventType.FEEDING&&active.detail=="LEFT")vm?.stop() else vm?.startFeeding(FeedingKind.LEFT)}
-            ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")"Стоп" else "Правая",if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")Icons.Default.Stop else Icons.Default.ArrowForward,Modifier.weight(1f)){if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")vm?.stop() else vm?.startFeeding(FeedingKind.RIGHT)}
-            ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="BOTTLE")"Стоп" else "Бутылочка",if(active?.type==EventType.FEEDING&&active.detail=="BOTTLE")Icons.Default.Stop else Icons.Default.LocalDrink,Modifier.weight(1f)){if(active?.type==EventType.FEEDING&&active.detail=="BOTTLE")vm?.stop() else vm?.startFeeding(FeedingKind.BOTTLE)}
+            ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="LEFT")"Стоп" else "Левая",if(active?.type==EventType.FEEDING&&active.detail=="LEFT")Icons.Default.Stop else Icons.Default.ArrowBack,Modifier.weight(1f),active?.type==EventType.FEEDING&&active.detail=="LEFT"){if(active?.type==EventType.FEEDING&&active.detail=="LEFT")vm?.stop() else vm?.startFeeding(FeedingKind.LEFT)}
+            ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")"Стоп" else "Правая",if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")Icons.Default.Stop else Icons.Default.ArrowForward,Modifier.weight(1f),active?.type==EventType.FEEDING&&active.detail=="RIGHT"){if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")vm?.stop() else vm?.startFeeding(FeedingKind.RIGHT)}
+            ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="BOTTLE")"Стоп" else "Бутылочка",if(active?.type==EventType.FEEDING&&active.detail=="BOTTLE")Icons.Default.Stop else Icons.Default.LocalDrink,Modifier.weight(1f),active?.type==EventType.FEEDING&&active.detail=="BOTTLE"){if(active?.type==EventType.FEEDING&&active.detail=="BOTTLE")vm?.stop() else vm?.startFeeding(FeedingKind.BOTTLE)}
         }
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            Button(onClick={if(active?.type==EventType.SLEEP&&active.detail=="LEFT")vm?.stop() else vm?.startSleep(SleepPosition.LEFT)},Modifier.weight(1f).height(52.dp)){Icon(if(active?.type==EventType.SLEEP&&active.detail=="LEFT")Icons.Default.Stop else Icons.Default.Bedtime,null);Spacer(Modifier.width(5.dp));Text(if(active?.type==EventType.SLEEP&&active.detail=="LEFT")"Стоп" else "Сон · лево")}
-            Button(onClick={if(active?.type==EventType.SLEEP&&active.detail=="RIGHT")vm?.stop() else vm?.startSleep(SleepPosition.RIGHT)},Modifier.weight(1f).height(52.dp)){Icon(if(active?.type==EventType.SLEEP&&active.detail=="RIGHT")Icons.Default.Stop else Icons.Default.Bedtime,null);Spacer(Modifier.width(5.dp));Text(if(active?.type==EventType.SLEEP&&active.detail=="RIGHT")"Стоп" else "Сон · право")}
-            Box{FilledTonalIconButton(onClick={more=true},modifier=Modifier.size(52.dp)){Icon(Icons.Default.MoreHoriz,"Другие положения")};DropdownMenu(more,{more=false}){listOf(SleepPosition.BACK,SleepPosition.OTHER).forEach{p->DropdownMenuItem({Text(posName(p))},{more=false;vm?.startSleep(p)})}}}
+            val stopLeft=active?.type==EventType.SLEEP&&active.detail=="LEFT";Button(onClick={if(stopLeft)vm?.stop() else vm?.startSleep(SleepPosition.LEFT)},Modifier.weight(1f).height(52.dp),colors=if(stopLeft)ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors()){Icon(if(stopLeft)Icons.Default.Stop else Icons.Default.Bedtime,null);Spacer(Modifier.width(5.dp));Text(if(stopLeft)"Стоп" else "Лево")}
+            val stopRight=active?.type==EventType.SLEEP&&active.detail=="RIGHT";Button(onClick={if(stopRight)vm?.stop() else vm?.startSleep(SleepPosition.RIGHT)},Modifier.weight(1f).height(52.dp),colors=if(stopRight)ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors()){Icon(if(stopRight)Icons.Default.Stop else Icons.Default.Bedtime,null);Spacer(Modifier.width(5.dp));Text(if(stopRight)"Стоп" else "Право")}
+            val stopOther=active?.type==EventType.SLEEP&&active.detail in listOf("OTHER","BACK");Button(onClick={if(stopOther)vm?.stop() else vm?.startSleep(SleepPosition.OTHER)},Modifier.weight(1f).height(52.dp),colors=if(stopOther)ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors()){Icon(if(stopOther)Icons.Default.Stop else Icons.Default.MoreHoriz,null);Spacer(Modifier.width(5.dp));Text(if(stopOther)"Стоп" else "Другое")}
         }
-        if(active?.type==EventType.SLEEP)Column{Text("Сменить положение",style=MaterialTheme.typography.labelMedium);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){SleepPosition.entries.forEach{p->FilterChip(selected=active.detail==p.name,onClick={vm?.changePosition(p)},label={Text(shortPos(p),maxLines=1)},modifier=Modifier.weight(1f))}}}
+        if(active?.type==EventType.SLEEP)Column{Text("Положение головы",style=MaterialTheme.typography.labelMedium);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(SleepPosition.LEFT,SleepPosition.RIGHT,SleepPosition.OTHER).forEach{p->FilterChip(selected=active.detail==p.name||(p==SleepPosition.OTHER&&active.detail=="BACK"),onClick={vm?.changePosition(p)},label={Text(shortPos(p),maxLines=1)},modifier=Modifier.weight(1f))}}}
     }}
 }
 
@@ -86,12 +95,13 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
     } }
 }
 
-@Composable private fun ActionButton(text:String,icon:androidx.compose.ui.graphics.vector.ImageVector,modifier:Modifier,onClick:()->Unit){FilledTonalButton(onClick=onClick,modifier=modifier.height(64.dp),contentPadding=PaddingValues(6.dp)){Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(icon,null);Text(text,fontSize=12.sp)}}}
+@Composable private fun ActionButton(text:String,icon:androidx.compose.ui.graphics.vector.ImageVector,modifier:Modifier,isStop:Boolean=false,onClick:()->Unit){FilledTonalButton(onClick=onClick,modifier=modifier.height(64.dp),contentPadding=PaddingValues(6.dp),colors=if(isStop)ButtonDefaults.filledTonalButtonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError) else ButtonDefaults.filledTonalButtonColors()){Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(icon,null);Text(text,fontSize=12.sp)}}}
 @Composable private fun DayHeader(day:LocalDate,prev:()->Unit,next:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){IconButton(prev){Icon(Icons.Default.ChevronLeft,"Предыдущий день")};Text(if(day==LocalDate.now())"Сегодня" else day.format(DateTimeFormatter.ofPattern("d MMMM")),fontWeight=FontWeight.Bold,fontSize=19.sp);IconButton(next,enabled=day<LocalDate.now()){Icon(Icons.Default.ChevronRight,"Следующий день")}}}
 @Composable private fun Stats(events:List<BabyEvent>,segments:List<SleepSegment>,now:Long){
-    val feeds=events.count{it.type==EventType.FEEDING};val sleepEvents=events.filter{it.type==EventType.SLEEP};val ids=sleepEvents.map{it.id}.toSet();val sleep=sleepEvents.sumOf{(it.endedAt?:now)-it.startedAt}
+    val sleepEvents=events.filter{it.type==EventType.SLEEP};val ids=sleepEvents.map{it.id}.toSet()
+    fun feed(kind:FeedingKind)=events.filter{it.type==EventType.FEEDING&&it.detail==kind.name}.sumOf{(it.endedAt?:now)-it.startedAt}
     fun side(p:SleepPosition)=segments.filter{it.eventId in ids&&it.position==p}.sumOf{(it.endedAt?:now)-it.startedAt}
-    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){MiniStat("Кормлений","$feeds",Modifier.weight(1f));MiniStat("Сна",duration(sleep),Modifier.weight(1f));MiniStat("Событий","${events.size}",Modifier.weight(1f))};if(sleepEvents.isNotEmpty())Text("Сон по положениям: лево ${duration(side(SleepPosition.LEFT))} · право ${duration(side(SleepPosition.RIGHT))} · спина ${duration(side(SleepPosition.BACK))}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("За день",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){MiniStat("Грудь · левая",duration(feed(FeedingKind.LEFT)),Modifier.weight(1f));MiniStat("Грудь · правая",duration(feed(FeedingKind.RIGHT)),Modifier.weight(1f))};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){MiniStat("Сон · лево",duration(side(SleepPosition.LEFT)),Modifier.weight(1f));MiniStat("Сон · право",duration(side(SleepPosition.RIGHT)),Modifier.weight(1f))}}
 }
 @Composable private fun MiniStat(label:String,value:String,modifier:Modifier){Surface(modifier,shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surfaceVariant){Column(Modifier.padding(12.dp)){Text(value,fontWeight=FontWeight.Bold,fontSize=18.sp);Text(label,fontSize=12.sp)}}}
 @Composable private fun EventRow(e:BabyEvent,now:Long,edit:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){Column(horizontalAlignment=Alignment.CenterHorizontally){Surface(shape=CircleShape,color=if(e.type==EventType.SLEEP)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer){Icon(if(e.type==EventType.SLEEP)Icons.Default.Bedtime else Icons.Default.Restaurant,null,Modifier.padding(9.dp))}};Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(if(e.type==EventType.SLEEP)"Сон · ${posName(SleepPosition.valueOf(e.detail))}" else "Кормление · ${feedName(e.detail)}",fontWeight=FontWeight.SemiBold);Text("${clock(e.startedAt)} – ${e.endedAt?.let(::clock)?:"сейчас"} · ${duration((e.endedAt?:now)-e.startedAt)}",color=MaterialTheme.colorScheme.onSurfaceVariant)};IconButton(edit){Icon(Icons.Default.Edit,"Изменить")}}}
@@ -100,7 +110,7 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
 @Composable private fun EditDialog(e:BabyEvent,onDismiss:()->Unit,onSave:(BabyEvent)->Unit,onDelete:()->Unit){
     var start by remember { mutableLongStateOf(e.startedAt) }; var end by remember { mutableStateOf(e.endedAt) }; var detail by remember { mutableStateOf(e.detail) }
     var picking by remember { mutableStateOf<String?>(null) }
-    val options=if(e.type==EventType.FEEDING) FeedingKind.entries.map{it.name to feedName(it.name)} else SleepPosition.entries.map{it.name to posName(it)}
+    val options=if(e.type==EventType.FEEDING) FeedingKind.entries.map{it.name to feedName(it.name)} else listOf(SleepPosition.LEFT,SleepPosition.RIGHT,SleepPosition.OTHER).map{it.name to posName(it)}
     AlertDialog(onDismissRequest=onDismiss,title={Text("Изменить событие")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
         Text("Время",fontWeight=FontWeight.SemiBold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={picking="start"},modifier=Modifier.weight(1f)){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(5.dp));Text("Начало ${clock(start)}")};OutlinedButton(onClick={picking="end"},modifier=Modifier.weight(1f)){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(5.dp));Text("Конец ${end?.let(::clock)?:"сейчас"}")}}
         Text("Тип / положение",fontWeight=FontWeight.SemiBold);options.forEach{(key,label)->FilterChip(selected=detail==key,onClick={detail=key},label={Text(label)})}
@@ -112,5 +122,5 @@ private fun ago(ms:Long)="${duration(ms)} назад"
 private fun clock(ms:Long)=java.text.SimpleDateFormat("HH:mm",java.util.Locale.getDefault()).format(java.util.Date(ms))
 private fun withTime(epoch:Long,hour:Int,minute:Int)=java.util.Calendar.getInstance().apply{timeInMillis=epoch;set(java.util.Calendar.HOUR_OF_DAY,hour);set(java.util.Calendar.MINUTE,minute);set(java.util.Calendar.SECOND,0);set(java.util.Calendar.MILLISECOND,0)}.timeInMillis
 private fun feedName(s:String)=when(s){"LEFT"->"левая грудь";"RIGHT"->"правая грудь";else->"бутылочка"}
-private fun posName(p:SleepPosition)=when(p){SleepPosition.LEFT->"Левый бок";SleepPosition.RIGHT->"Правый бок";SleepPosition.BACK->"На спине";SleepPosition.OTHER->"Другое"}
-private fun shortPos(p:SleepPosition)=when(p){SleepPosition.LEFT->"Лево";SleepPosition.RIGHT->"Право";SleepPosition.BACK->"Спина";SleepPosition.OTHER->"Другое"}
+private fun posName(p:SleepPosition)=when(p){SleepPosition.LEFT->"Голова слева";SleepPosition.RIGHT->"Голова справа";SleepPosition.BACK, SleepPosition.OTHER->"Другое"}
+private fun shortPos(p:SleepPosition)=when(p){SleepPosition.LEFT->"Лево";SleepPosition.RIGHT->"Право";SleepPosition.BACK, SleepPosition.OTHER->"Другое"}

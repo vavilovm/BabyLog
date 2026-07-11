@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application android:name=".BabyLogApp" android:allowBackup="true" android:label="BabyLog" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/Theme.BabyLog">
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true"><meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/></provider>
         <activity android:name=".MainActivity" android:exported="true">
@@ -15,5 +16,9 @@
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/sleep_widget_info"/>
         </receiver>
+        <receiver android:name=".widget.FeedingHorizontalWidgetReceiver" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/feeding_horizontal_widget_info"/></receiver>
+        <receiver android:name=".widget.FeedingMiniWidgetReceiver" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/feeding_mini_widget_info"/></receiver>
+        <receiver android:name=".sync.TimerActionReceiver" android:exported="false" />
+        <receiver android:name=".sync.BootReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter></receiver>
     </application>
 </manifest>

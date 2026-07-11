@@ -17,6 +17,8 @@ import com.mark.babylog.widget.SleepWidget
 import com.mark.babylog.widget.FeedingHorizontalWidget
 import com.mark.babylog.widget.FeedingMiniWidget
 import androidx.glance.appwidget.updateAll
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.GlanceId
 import kotlinx.coroutines.*
 
 object AppSurfaceSync {
@@ -24,9 +26,28 @@ object AppSurfaceSync {
     private const val NOTIFICATION_ID=42
 
     suspend fun refresh(context:Context){
-        FeedingWidget().updateAll(context);SleepWidget().updateAll(context);FeedingHorizontalWidget().updateAll(context);FeedingMiniWidget().updateAll(context)
+        refreshWidgets(context)
         val active=(context.applicationContext as BabyLogApp).database.events().active()
         refreshNotification(context,active)
+    }
+
+    suspend fun refreshFromWidget(context:Context,id:GlanceId,widget:GlanceAppWidget){
+        // The widget that received the tap must not wait behind updateAll requests
+        // for every installed widget. Push its fresh Room state to the launcher first.
+        widget.update(context,id)
+        coroutineScope {
+            launch { refreshWidgets(context) }
+            launch {
+                val active=(context.applicationContext as BabyLogApp).database.events().active()
+                refreshNotification(context,active)
+            }
+        }
+    }
+
+    private suspend fun refreshWidgets(context:Context)=coroutineScope {
+        listOf(
+            FeedingWidget(), SleepWidget(), FeedingHorizontalWidget(), FeedingMiniWidget()
+        ).map { widget -> async { widget.updateAll(context) } }.awaitAll()
     }
 
     private fun refreshNotification(context:Context,active:BabyEvent?){
@@ -36,7 +57,7 @@ object AppSurfaceSync {
         if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(CHANNEL,"Активные таймеры",NotificationManager.IMPORTANCE_LOW).apply{description="Текущее кормление или сон"})
         val open=PendingIntent.getActivity(context,1,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val title=if(active.type==EventType.FEEDING)"Кормление · ${feedName(active.detail)}" else "Сон · ${sleepName(active.detail)}"
-        val builder=NotificationCompat.Builder(context,CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle(title).setContentText("Нажмите действие или откройте BabyLog").setContentIntent(open).setWhen(active.startedAt).setUsesChronometer(true).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW)
+        val builder=NotificationCompat.Builder(context,CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle(title).setContentText("Управление таймером доступно прямо здесь").setContentIntent(open).setWhen(active.startedAt).setUsesChronometer(true).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STOPWATCH).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         builder.addAction(0,"Стоп",action(context,"STOP",10))
         if(active.type==EventType.FEEDING){builder.addAction(0,"Левая",action(context,"FEED_LEFT",11));builder.addAction(0,"Правая",action(context,"FEED_RIGHT",12));builder.addAction(0,"Бутылочка",action(context,"FEED_BOTTLE",13))}
         else{builder.addAction(0,"Лево",action(context,"SLEEP_LEFT",14));builder.addAction(0,"Право",action(context,"SLEEP_RIGHT",15));builder.addAction(0,"Другое",action(context,"SLEEP_OTHER",16))}

@@ -1,0 +1,7 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal" android:padding="8dp" android:background="@drawable/widget_preview_background">
+    <TextView android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:background="@drawable/widget_preview_button" android:text="L" android:textColor="#FFFFFF" android:textStyle="bold" />
+    <Space android:layout_width="6dp" android:layout_height="1dp" />
+    <TextView android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:background="@drawable/widget_preview_button" android:text="R" android:textColor="#FFFFFF" android:textStyle="bold" />
+    <Space android:layout_width="6dp" android:layout_height="1dp" />
+    <TextView android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:background="@drawable/widget_preview_button" android:text="🍼" android:textColor="#FFFFFF" android:textStyle="bold" />
+</LinearLayout>

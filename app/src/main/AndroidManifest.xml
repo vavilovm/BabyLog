@@ -8,16 +8,16 @@
                 <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <receiver android:name=".widget.FeedingWidgetReceiver" android:exported="true">
+        <receiver android:name=".widget.FeedingWidgetReceiver" android:exported="true" android:label="@string/widget_feeding_name">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/feeding_widget_info"/>
         </receiver>
-        <receiver android:name=".widget.SleepWidgetReceiver" android:exported="true">
+        <receiver android:name=".widget.SleepWidgetReceiver" android:exported="true" android:label="@string/widget_sleep_name">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/sleep_widget_info"/>
         </receiver>
-        <receiver android:name=".widget.FeedingHorizontalWidgetReceiver" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/feeding_horizontal_widget_info"/></receiver>
-        <receiver android:name=".widget.FeedingMiniWidgetReceiver" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/feeding_mini_widget_info"/></receiver>
+        <receiver android:name=".widget.FeedingHorizontalWidgetReceiver" android:exported="true" android:label="@string/widget_feeding_horizontal_name"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/feeding_horizontal_widget_info"/></receiver>
+        <receiver android:name=".widget.FeedingMiniWidgetReceiver" android:exported="true" android:label="@string/widget_feeding_mini_name"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/feeding_mini_widget_info"/></receiver>
         <receiver android:name=".sync.TimerActionReceiver" android:exported="false" />
         <receiver android:name=".sync.BootReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter></receiver>
     </application>

@@ -10,13 +10,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
+import com.android.resources.Density
+import com.mark.babylog.data.*
+import com.mark.babylog.widget.*
 import org.junit.Rule
 import org.junit.Test
 
 class WidgetScreenshotTest {
-    @get:Rule val paparazzi=Paparazzi(deviceConfig=DeviceConfig.PIXEL_5.copy(screenWidth=600,screenHeight=360))
-    @Test fun feedingWidget_matchesGolden()=paparazzi.snapshot{BabyTheme{WidgetPreview("Кормление","правая · 1 ч 20 мин назад",listOf("Левая","Правая","Бутылочка"))}}
-    @Test fun sleepWidget_matchesGolden()=paparazzi.snapshot{BabyTheme{WidgetPreview("Сон","Спит 42 мин",listOf("Закончить","Левый бок","Правый бок"))}}
+    @get:Rule val paparazzi=Paparazzi(deviceConfig=DeviceConfig(screenWidth=300,screenHeight=275,density=Density.MEDIUM))
+    private val now=1_000_000L
+    @Test fun feedingWidget_selection_matchesGolden()=paparazzi.snapshot{BabyTheme{WidgetPreview(feedingWidgetUi(null,null,now),null)}}
+    @Test fun feedingWidget_activeLeft_showsSecondsAndStop()=paparazzi.snapshot{BabyTheme{WidgetPreview(feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"LEFT",now-42_000),null,now),"00:42")}}
+    @Test fun sleepWidget_selection_matchesGolden()=paparazzi.snapshot{BabyTheme{WidgetPreview(sleepWidgetUi(null,now),null)}}
+    @Test fun sleepWidget_activeRight_showsSecondsAndStop()=paparazzi.snapshot{BabyTheme{WidgetPreview(sleepWidgetUi(BabyEvent(2,EventType.SLEEP,"RIGHT",now-83_000),now),"01:23")}}
 }
 
-@Composable private fun WidgetPreview(title:String,status:String,actions:List<String>){Column(Modifier.fillMaxSize().background(Color(0xFFF4EFF7)).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text(title,style=MaterialTheme.typography.titleLarge);Text(status);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){actions.take(2).forEach{Button({},Modifier.weight(1f)){Text(it)}}};Button({},Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)){Text(actions[2])}}}
+@Composable private fun WidgetPreview(ui:WidgetUi,timer:String?){Column(Modifier.fillMaxSize().background(Color(0xFFF4EFF7)).padding(16.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text(ui.title,style=MaterialTheme.typography.titleLarge);Text(ui.status);if(timer!=null)Text(timer,style=MaterialTheme.typography.headlineSmall);ui.buttons.forEach{Button({},Modifier.fillMaxWidth(),shape=RoundedCornerShape(16.dp)){Text(it.label,maxLines=1)}}}}

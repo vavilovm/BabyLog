@@ -6,6 +6,9 @@ import android.appwidget.AppWidgetManager
 import android.content.*
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
+import android.view.View
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -77,11 +80,38 @@ object AppSurfaceSync {
         if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(CHANNEL,"Активные таймеры",NotificationManager.IMPORTANCE_LOW).apply{description="Текущее кормление или сон"})
         val open=PendingIntent.getActivity(context,1,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val title=if(active.type==EventType.FEEDING)"Кормление · ${feedName(active.detail)}" else "Сон · ${sleepName(active.detail)}"
-        val builder=NotificationCompat.Builder(context,CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle(title).setContentText("Управление таймером доступно прямо здесь").setContentIntent(open).setWhen(active.startedAt).setUsesChronometer(true).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STOPWATCH).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        val compact=compactNotification(context,active)
+        val builder=NotificationCompat.Builder(context,CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle(title).setContentText("Управление таймером доступно прямо здесь").setContentIntent(open).setWhen(active.startedAt).setUsesChronometer(true).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STOPWATCH).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
         builder.addAction(0,"Стоп",action(context,"STOP",10))
         if(active.type==EventType.FEEDING){builder.addAction(0,"Левая",action(context,"FEED_LEFT",11));builder.addAction(0,"Правая",action(context,"FEED_RIGHT",12));builder.addAction(0,"Бутылочка",action(context,"FEED_BOTTLE",13))}
         else{builder.addAction(0,"Лево",action(context,"SLEEP_LEFT",14));builder.addAction(0,"Право",action(context,"SLEEP_RIGHT",15))}
         manager.notify(NOTIFICATION_ID,builder.build())
+    }
+
+    private data class CompactAction(val label:String,val command:String,val request:Int)
+
+    private fun compactNotification(context:Context,active:BabyEvent)=RemoteViews(context.packageName,R.layout.notification_timer_compact).apply{
+        val elapsed=System.currentTimeMillis()-active.startedAt
+        setChronometer(R.id.notification_chronometer,SystemClock.elapsedRealtime()-elapsed,null,true)
+        setString(R.id.notification_chronometer,"setFormat",if(active.type==EventType.FEEDING)"🍼 %s" else "🌙 %s")
+        val alternatives=if(active.type==EventType.FEEDING){
+            listOf(
+                CompactAction("Левая","FEED_LEFT",11),
+                CompactAction("Правая","FEED_RIGHT",12),
+                CompactAction("Бутылочка","FEED_BOTTLE",13)
+            ).filterNot{it.command.removePrefix("FEED_")==active.detail}
+        }else{
+            listOf(
+                CompactAction("Лево","SLEEP_LEFT",14),
+                CompactAction("Право","SLEEP_RIGHT",15)
+            ).filterNot{it.command.removePrefix("SLEEP_")==active.detail}
+        }
+        val actions=listOf(CompactAction("Стоп","STOP",10))+alternatives
+        listOf(R.id.notification_action_1,R.id.notification_action_2,R.id.notification_action_3).forEachIndexed{index,id->
+            val item=actions.getOrNull(index)
+            setViewVisibility(id,if(item==null)View.GONE else View.VISIBLE)
+            item?.let{setTextViewText(id,it.label);setOnClickPendingIntent(id,action(context,it.command,it.request))}
+        }
     }
 
     private fun action(context:Context,command:String,request:Int)=PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

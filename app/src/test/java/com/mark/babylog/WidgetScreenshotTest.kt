@@ -24,7 +24,7 @@ class WidgetScreenshotTest {
     @get:Rule val paparazzi=Paparazzi(deviceConfig=DeviceConfig(screenWidth=320,screenHeight=205,orientation=ScreenOrientation.LANDSCAPE,density=Density.MEDIUM))
     @Test fun feedingCompact_selection()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(null,null,NOW),null)}}
     @Test fun feedingCompact_activeLeft()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"LEFT",NOW-42_000),null,NOW),"00:42")}}
-    @Test fun sleepCompact_onlyLeftRightOther()=paparazzi.snapshot{BabyTheme{StandardPreview(sleepWidgetUi(null,NOW),null)}}
+    @Test fun sleepCompact_onlyLeftRight()=paparazzi.snapshot{BabyTheme{StandardPreview(sleepWidgetUi(null,NOW),null)}}
 }
 
 class HorizontalWidgetScreenshotTest {
@@ -37,6 +37,6 @@ class MiniWidgetScreenshotTest {
     @Test fun feedingMini_usesSingleSymbols()=paparazzi.snapshot{BabyTheme{Row(Modifier.fillMaxSize().background(Color(0xFFF4EFF7)).padding(7.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("L","R","🍼").forEach{MiniButton(it,Modifier.weight(1f))}}}}
 }
 
-@Composable private fun StandardPreview(ui:WidgetUi,timer:String?){Column(Modifier.fillMaxSize().background(Color(0xFFF4EFF7)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text(ui.title,style=MaterialTheme.typography.titleMedium);Text(ui.status,style=MaterialTheme.typography.bodySmall);if(timer!=null)Text(timer,style=MaterialTheme.typography.titleLarge);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){ui.buttons.take(2).forEach{MiniButton(it.label,Modifier.weight(1f))}};MiniButton(ui.buttons[2].label,Modifier.fillMaxWidth())}}
+@Composable private fun StandardPreview(ui:WidgetUi,timer:String?){Column(Modifier.fillMaxSize().background(Color(0xFFF4EFF7)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text(ui.title,style=MaterialTheme.typography.titleMedium);Text(ui.status,style=MaterialTheme.typography.bodySmall);if(timer!=null)Text(timer,style=MaterialTheme.typography.titleLarge);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){ui.buttons.take(2).forEach{MiniButton(it.label,Modifier.weight(1f))}};ui.buttons.drop(2).firstOrNull()?.let{MiniButton(it.label,Modifier.fillMaxWidth())}}}
 @Composable private fun HorizontalPreview(ui:WidgetUi){Column(Modifier.fillMaxSize().background(Color(0xFFF4EFF7)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text("${ui.title} · ${ui.status}",style=MaterialTheme.typography.bodyMedium);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(7.dp)){ui.buttons.forEach{MiniButton(it.label,Modifier.weight(1f))}}}}
 @Composable private fun MiniButton(text:String,modifier:Modifier){Surface(modifier.height(42.dp),shape=RoundedCornerShape(16.dp),color=Color(0xFF6F579C)){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text(text,color=Color.White,maxLines=1)}}}

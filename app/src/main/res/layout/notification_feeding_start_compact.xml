@@ -8,11 +8,11 @@
     android:paddingEnd="4dp">
 
     <TextView
+        android:id="@+id/notification_feeding_summary"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:gravity="center_vertical"
-        android:text="🍼 Начать"
         android:textColor="?android:attr/textColorPrimary"
         android:textSize="15sp"
         android:textStyle="bold" />

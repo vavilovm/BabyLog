@@ -44,7 +44,8 @@ object AppSurfaceSync {
     suspend fun refresh(context:Context)=refreshMutex.withLock{
         runCatching{refreshWidgets(context)}
         val active=(context.applicationContext as BabyLogApp).database.events().active()
-        runCatching{refreshNotification(context,active)}
+        val lastFeed=(context.applicationContext as BabyLogApp).database.events().lastFeed()
+        runCatching{refreshNotification(context,active,lastFeed)}
     }
 
     suspend fun refreshFromWidget(context:Context,id:GlanceId,widget:GlanceAppWidget){
@@ -54,7 +55,8 @@ object AppSurfaceSync {
                 launch { runCatching{refreshWidgets(context)} }
                 launch {
                     val active=(context.applicationContext as BabyLogApp).database.events().active()
-                    runCatching{refreshNotification(context,active)}
+                    val lastFeed=(context.applicationContext as BabyLogApp).database.events().lastFeed()
+                    runCatching{refreshNotification(context,active,lastFeed)}
                 }
             }
         }
@@ -81,13 +83,13 @@ object AppSurfaceSync {
         AppWidgetManager.getInstance(context).updateAppWidget((id as AppWidgetId).appWidgetId,views)
     }
 
-    private fun refreshNotification(context:Context,active:BabyEvent?){
+    private fun refreshNotification(context:Context,active:BabyEvent?,lastFeed:BabyEvent?){
         val manager=NotificationManagerCompat.from(context)
         manager.cancel(LEGACY_NOTIFICATION_ID)
         if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         if(active==null){
             manager.cancel(NOTIFICATION_ID)
-            showFeedingStartNotification(context,manager)
+            showFeedingStartNotification(context,manager,lastFeed)
             return
         }
         manager.cancel(FEEDING_START_NOTIFICATION_ID)
@@ -104,12 +106,13 @@ object AppSurfaceSync {
         if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(ACTIVE_TIMER_CHANNEL,"Активные таймеры",NotificationManager.IMPORTANCE_DEFAULT).apply{description="Текущее кормление или сон";setSound(null,null);enableVibration(false);setShowBadge(false);lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
     }
 
-    private fun showFeedingStartNotification(context:Context,manager:NotificationManagerCompat){
+    private fun showFeedingStartNotification(context:Context,manager:NotificationManagerCompat,lastFeed:BabyEvent?){
         if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(FEEDING_START_CHANNEL,"Быстрый старт кормления",NotificationManager.IMPORTANCE_LOW).apply{description="Быстрый старт кормления с экрана блокировки";setSound(null,null);enableVibration(false);setShowBadge(false);lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
         val open=PendingIntent.getActivity(context,2,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val actions=feedingStartActions()
-        val compact=feedingStartCompactNotification(context,actions)
-        val builder=NotificationCompat.Builder(context,FEEDING_START_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle("Начать кормление").setContentText("Выберите способ кормления").setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STATUS).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
+        val summary=lastFeedSummary(lastFeed)
+        val compact=feedingStartCompactNotification(context,actions,summary)
+        val builder=NotificationCompat.Builder(context,FEEDING_START_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle("Начать кормление").setContentText(summary?:"Выберите способ кормления").setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STATUS).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
         actions.forEach{builder.addAction(0,it.label,action(context,it.command,it.request))}
         manager.notify(FEEDING_START_NOTIFICATION_ID,builder.build())
     }
@@ -128,7 +131,8 @@ object AppSurfaceSync {
         }
     }
 
-    private fun feedingStartCompactNotification(context:Context,actions:List<CompactAction>)=RemoteViews(context.packageName,R.layout.notification_feeding_start_compact).apply{
+    private fun feedingStartCompactNotification(context:Context,actions:List<CompactAction>,summary:String?)=RemoteViews(context.packageName,R.layout.notification_feeding_start_compact).apply{
+        setTextViewText(R.id.notification_feeding_summary,summary?:"🍼 Начать")
         actions.forEachIndexed{index,item->
             val id=listOf(R.id.notification_action_1,R.id.notification_action_2,R.id.notification_action_3)[index]
             setTextViewText(id,item.label)
@@ -153,6 +157,19 @@ object AppSurfaceSync {
         CompactAction("R","FEED_RIGHT",22),
         CompactAction("Бутылочка","FEED_BOTTLE",23)
     )
+
+    private fun lastFeedSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
+        "Последнее: ${feedName(it.detail)} · ${formatElapsed((now-it.startedAt).coerceAtLeast(0))} назад"
+    }
+
+    private fun formatElapsed(elapsed:Long):String{
+        val minutes=elapsed/60_000
+        return when{
+            minutes<1->"только что"
+            minutes<60->"$minutes мин"
+            else->{val hours=minutes/60;val remainder=minutes%60;if(remainder==0L)"$hours ч" else "$hours ч $remainder мин"}
+        }
+    }
 
     private fun action(context:Context,command:String,request:Int)=PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     private fun feedName(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"бутылочка"}

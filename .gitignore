@@ -10,3 +10,5 @@ app/google-services.json
 .firebase/
 functions/node_modules/
 functions/lib/
+keystore/
+keystore.properties

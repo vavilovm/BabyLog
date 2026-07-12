@@ -15,8 +15,8 @@ android {
         applicationId = "com.mark.babylog"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.5.2"
+        versionCode = 12
+        versionName = "0.5.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -24,6 +24,20 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     testOptions { unitTests.all { it.forkEvery = 1 } }
+    signingConfigs {
+        val storePath=System.getenv("BABYLOG_STORE_FILE")
+        val storePasswordValue=System.getenv("BABYLOG_STORE_PASSWORD")
+        val keyPasswordValue=System.getenv("BABYLOG_KEY_PASSWORD")
+        if(storePath!=null&&storePasswordValue!=null&&keyPasswordValue!=null)create("release"){
+            storeFile=rootProject.file(storePath)
+            storePassword=storePasswordValue
+            keyAlias="babylog"
+            keyPassword=keyPasswordValue
+        }
+    }
+    buildTypes {
+        getByName("release") { signingConfig=signingConfigs.findByName("release") }
+    }
 }
 
 dependencies {

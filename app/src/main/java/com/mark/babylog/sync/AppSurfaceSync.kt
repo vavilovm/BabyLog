@@ -30,30 +30,35 @@ import androidx.glance.appwidget.runComposition
 import androidx.glance.GlanceId
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 object AppSurfaceSync {
     private const val CHANNEL="active_timers_visible"
     private const val LEGACY_NOTIFICATION_ID=42
     private const val NOTIFICATION_ID=43
+    private val refreshMutex=Mutex()
 
-    suspend fun refresh(context:Context){
-        refreshWidgets(context)
+    suspend fun refresh(context:Context)=refreshMutex.withLock{
+        runCatching{refreshWidgets(context)}
         val active=(context.applicationContext as BabyLogApp).database.events().active()
-        refreshNotification(context,active)
+        runCatching{refreshNotification(context,active)}
     }
 
     suspend fun refreshFromWidget(context:Context,id:GlanceId,widget:GlanceAppWidget){
-        pushImmediately(context,widget,id)
-        coroutineScope {
-            launch { refreshWidgets(context) }
-            launch {
-                val active=(context.applicationContext as BabyLogApp).database.events().active()
-                refreshNotification(context,active)
+        runCatching{pushImmediately(context,widget,id)}
+        refreshMutex.withLock {
+            supervisorScope {
+                launch { runCatching{refreshWidgets(context)} }
+                launch {
+                    val active=(context.applicationContext as BabyLogApp).database.events().active()
+                    runCatching{refreshNotification(context,active)}
+                }
             }
         }
     }
 
-    private suspend fun refreshWidgets(context:Context)=coroutineScope {
+    private suspend fun refreshWidgets(context:Context)=supervisorScope {
         val manager=AppWidgetManager.getInstance(context)
         val targets=listOf(
             FeedingWidget() to FeedingWidgetReceiver::class.java,
@@ -63,7 +68,7 @@ object AppSurfaceSync {
         )
         targets.flatMap { (widget,receiver) ->
             manager.getAppWidgetIds(ComponentName(context,receiver)).map { appWidgetId ->
-                async { pushImmediately(context,widget,AppWidgetId(appWidgetId)) }
+                async { runCatching{pushImmediately(context,widget,AppWidgetId(appWidgetId))} }
             }
         }.awaitAll()
     }

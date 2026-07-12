@@ -110,8 +110,8 @@ object AppSurfaceSync {
     private fun notificationActions(active:BabyEvent):List<CompactAction>{
         fun item(detail:String,label:String,command:String,request:Int)=CompactAction(if(active.detail==detail)"Стоп" else label,if(active.detail==detail)"STOP" else command,request)
         return if(active.type==EventType.FEEDING)listOf(
-            item("LEFT","Левая","FEED_LEFT",11),
-            item("RIGHT","Правая","FEED_RIGHT",12),
+            item("LEFT","L","FEED_LEFT",11),
+            item("RIGHT","R","FEED_RIGHT",12),
             item("BOTTLE","Бутылочка","FEED_BOTTLE",13)
         )else listOf(
             item("LEFT","Лево","SLEEP_LEFT",14),
@@ -120,7 +120,7 @@ object AppSurfaceSync {
     }
 
     private fun action(context:Context,command:String,request:Int)=PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    private fun feedName(v:String)=when(v){"LEFT"->"левая грудь";"RIGHT"->"правая грудь";else->"бутылочка"}
+    private fun feedName(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"бутылочка"}
     private fun sleepName(v:String)=when(v){"LEFT"->"голова слева";"RIGHT"->"голова справа";else->"другое"}
 }
 

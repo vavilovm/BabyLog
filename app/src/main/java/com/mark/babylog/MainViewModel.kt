@@ -16,7 +16,7 @@ import java.time.*
 import java.util.*
 
 data class UiState(val events: List<BabyEvent> = emptyList(), val segments: List<SleepSegment> = emptyList(), val selectedDay: LocalDate = LocalDate.now()) {
-    val active get() = events.firstOrNull { it.endedAt == null }
+    val active get() = events.firstOrNull { it.type == EventType.FEEDING && it.endedAt == null }
 }
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {

@@ -52,8 +52,9 @@ interface EventDao {
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt") suspend fun allForTest():List<BabyEvent>
     @Query("SELECT * FROM sleep_segments ORDER BY startedAt") suspend fun allSegmentsForTest():List<SleepSegment>
     @Query("SELECT * FROM sleep_segments ORDER BY startedAt") fun observeSegments():Flow<List<SleepSegment>>
-    @Query("SELECT * FROM events WHERE endedAt IS NULL AND deletedAt IS NULL ORDER BY startedAt DESC LIMIT 1") suspend fun active():BabyEvent?
+    @Query("SELECT * FROM events WHERE type='FEEDING' AND endedAt IS NULL AND deletedAt IS NULL ORDER BY startedAt DESC LIMIT 1") suspend fun active():BabyEvent?
     @Query("SELECT * FROM events WHERE type='FEEDING' AND deletedAt IS NULL ORDER BY startedAt DESC LIMIT 1") suspend fun lastFeed():BabyEvent?
+    @Query("SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL ORDER BY startedAt DESC LIMIT 1") suspend fun lastSleep():BabyEvent?
     @Query("SELECT * FROM events WHERE id=:id") suspend fun byId(id:Long):BabyEvent?
     @Query("SELECT * FROM events WHERE remoteId=:remoteId LIMIT 1") suspend fun byRemoteId(remoteId:String):BabyEvent?
     @Query("SELECT * FROM sleep_segments WHERE eventId=:eventId ORDER BY startedAt") suspend fun segments(eventId:Long):List<SleepSegment>
@@ -75,16 +76,15 @@ interface EventDao {
     @Query("DELETE FROM family_membership") suspend fun clearMembership()
 
     @Transaction suspend fun startFeeding(kind:FeedingKind,time:Long,owner:FamilyMembership?=null):BabyEvent {
-        active()?.let{current->if(current.type==EventType.SLEEP)finishSegment(current.id,time);finish(current.id,time)}
+        active()?.let{finish(it.id,time)}
         val value=BabyEvent(type=EventType.FEEDING,detail=kind.name,startedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
         return value.copy(id=insert(value))
     }
     @Transaction suspend fun startSleep(position:SleepPosition,time:Long,owner:FamilyMembership?=null):BabyEvent {
-        active()?.let{current->if(current.type==EventType.SLEEP)finishSegment(current.id,time);finish(current.id,time)}
-        val value=BabyEvent(type=EventType.SLEEP,detail=position.name,startedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
-        val saved=value.copy(id=insert(value));insert(SleepSegment(eventId=saved.id,position=position,startedAt=time,syncState=saved.syncState));return saved
+        val value=BabyEvent(type=EventType.SLEEP,detail=position.name,startedAt=time,endedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+        return value.copy(id=insert(value))
     }
-    @Transaction suspend fun stopActive(time:Long):BabyEvent? {val current=active()?:return null;if(current.type==EventType.SLEEP)finishSegment(current.id,time);finish(current.id,time);return current.copy(endedAt=time,updatedAt=time)}
+    @Transaction suspend fun stopActive(time:Long):BabyEvent? {val current=active()?:return null;finish(current.id,time);return current.copy(endedAt=time,updatedAt=time)}
 }
 
 class Converters {

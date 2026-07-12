@@ -11,13 +11,14 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class SleepTransitionTest {
-    @Test fun startingRightSleep_closesLeftSleepAndStartsNewEvent() = runTest {
+    @Test fun sleepMarksAreInstantAndDoNotStopFeeding() = runTest {
         val db=Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(),BabyDatabase::class.java).allowMainThreadQueries().build()
-        val dao=db.events();dao.startSleep(SleepPosition.LEFT,1_000);dao.startSleep(SleepPosition.RIGHT,2_000)
+        val dao=db.events();dao.startFeeding(FeedingKind.LEFT,500);dao.startSleep(SleepPosition.LEFT,1_000);dao.startSleep(SleepPosition.RIGHT,2_000)
         val events=dao.allForTest();val segments=dao.allSegmentsForTest()
-        assertEquals(2,events.size);assertEquals(2,segments.size)
-        assertEquals(2_000L,events[0].endedAt);assertEquals(2_000L,segments[0].endedAt)
-        assertEquals("RIGHT",events[1].detail);assertNull(events[1].endedAt);assertNull(segments[1].endedAt)
+        assertEquals(3,events.size);assertTrue(segments.isEmpty())
+        assertNull(events[0].endedAt)
+        assertEquals(1_000L,events[1].endedAt);assertEquals(2_000L,events[2].endedAt)
+        assertEquals("LEFT",dao.active()?.detail)
         db.close()
     }
 }

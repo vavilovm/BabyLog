@@ -28,7 +28,15 @@ class RepositorySyncTest{
 
     @Test fun offlineWithoutFamilyStaysLocalAndHasNoOutbox()=runTest{
         repository.startSleep(SleepPosition.RIGHT,2_000)
-        assertEquals(SyncState.LOCAL_ONLY,db.events().active()?.syncState)
+        assertEquals(SyncState.LOCAL_ONLY,db.events().allForTest().single().syncState)
+        assertNull(db.events().active())
         assertTrue(db.events().pending().isEmpty())
+    }
+
+    @Test fun familySleepMarkIsInstantAndQueuedAsLog()=runTest{
+        db.events().putMembership(FamilyMembership(householdId="family",memberId="papa",displayName="Папа"))
+        repository.startSleep(SleepPosition.LEFT,3_000)
+        assertEquals(3_000L,db.events().allForTest().single().endedAt)
+        assertEquals("LOG_SLEEP",db.events().pending().single().command)
     }
 }

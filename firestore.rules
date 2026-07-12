@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function member(householdId) { return signedIn() && exists(/databases/$(database)/documents/households/$(householdId)/members/$(request.auth.uid)); }
+    match /users/{uid} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
+    match /households/{householdId} {
+      allow read: if member(householdId); allow write: if false;
+      match /members/{uid} { allow read: if member(householdId); allow write: if false; }
+      match /events/{eventId} { allow read: if member(householdId); allow write: if false; }
+      match /commands/{commandId} { allow read: if member(householdId); allow write: if false; }
+    }
+    match /invites/{inviteId} { allow read, write: if false; }
+  }
+}

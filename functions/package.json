@@ -1,0 +1,9 @@
+{
+  "name": "babylog-functions",
+  "private": true,
+  "main": "lib/index.js",
+  "engines": { "node": "22" },
+  "scripts": { "build": "tsc", "deploy": "npm run build && firebase deploy --only functions,firestore", "test": "npm run build" },
+  "dependencies": { "firebase-admin": "^13.4.0", "firebase-functions": "^6.4.0" },
+  "devDependencies": { "typescript": "^5.8.3" }
+}

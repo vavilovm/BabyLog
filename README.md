@@ -1,6 +1,22 @@
 # BabyLog
 
-Простое полностью офлайн Android-приложение для учёта кормлений и сна.
+Android-приложение для совместного учёта кормлений и сна. Room обеспечивает мгновенную офлайн-работу, Firebase синхронизирует общий семейный журнал.
+
+## Настройка семейной синхронизации
+
+1. Создайте Firebase project на Blaze-плане и Android app с package `com.mark.babylog`.
+2. Включите Anonymous Authentication, Firestore и Cloud Messaging.
+3. Скачайте `google-services.json` в `app/google-services.json` (файл исключён из Git).
+4. Установите Firebase CLI, выполните `firebase use <project-id>`, затем из корня проекта:
+
+```bash
+cd functions && npm install && npm run build && cd ..
+firebase deploy --only functions,firestore
+```
+
+Без `google-services.json` приложение продолжает собираться и работать локально; семейный экран покажет инструкцию по подключению. Для CI содержимое файла можно восстановить из GitHub Secret перед Gradle build.
+
+Первый родитель нажимает иконку семьи и создаёт приглашение. Второй вводит восьмизначный код или сканирует QR. Код одноразовый и действует 24 часа.
 
 ## Быстрый просмотр
 

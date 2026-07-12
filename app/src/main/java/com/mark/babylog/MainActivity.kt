@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,7 +40,7 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); enableEdgeToEdge(); setContent { BabyTheme { NotificationPermission();val vm:MainViewModel=viewModel(); BabyScreen(vm.state.collectAsStateWithLifecycle().value, vm) } } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState);val invite=intent?.data?.takeIf{it.scheme=="babylog"&&it.host=="join"}?.getQueryParameter("code");enableEdgeToEdge(); setContent { BabyTheme { NotificationPermission();val vm:MainViewModel=viewModel(); BabyScreen(vm.state.collectAsStateWithLifecycle().value, vm,initialInvite=invite) } } }
 }
 
 @Composable private fun NotificationPermission(){val context=LocalContext.current;val scope=rememberCoroutineScope();val launcher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)scope.launch{AppSurfaceSync.refresh(context)}};LaunchedEffect(Unit){if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)launcher.launch(Manifest.permission.POST_NOTIFICATIONS)}}
@@ -48,15 +50,19 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
 @Composable fun BabyTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme=if(isSystemInDarkTheme()) Dark else Light, typography=Typography(), content=content)
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun BabyScreen(state: UiState, vm: MainViewModel? = null, fixedNow: Long? = null) {
+@Composable fun BabyScreen(state: UiState, vm: MainViewModel? = null, fixedNow: Long? = null,initialInvite:String?=null) {
     val context=LocalContext.current
     var now by remember { mutableLongStateOf(fixedNow ?: System.currentTimeMillis()) }
     LaunchedEffect(fixedNow) { if(fixedNow==null) while(true){ now=System.currentTimeMillis(); delay(1000) } }
     var edit by remember { mutableStateOf<BabyEvent?>(null) }
+    var familyOpen by remember { mutableStateOf(initialInvite!=null) }
+    val membership=vm?.membership?.collectAsStateWithLifecycle()?.value
+    val pending=vm?.pendingCount?.collectAsStateWithLifecycle()?.value?:0
+    val syncStatus=vm?.syncStatus?.collectAsStateWithLifecycle()?.value
     val zone=ZoneId.systemDefault(); val start=state.selectedDay.atStartOfDay(zone).toInstant().toEpochMilli(); val end=state.selectedDay.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
     val today=state.events.filter { it.startedAt in start until end }
     val active=state.active
-    Scaffold(topBar={ TopAppBar(title={Text("BabyLog",fontWeight=FontWeight.Bold)},actions={IconButton(onClick={vm?.shareCsv(context)}){Icon(Icons.Default.FileDownload,"Экспорт CSV")}}) },bottomBar={QuickActions(active,vm)}) { pad ->
+    Scaffold(topBar={ TopAppBar(title={Text("BabyLog",fontWeight=FontWeight.Bold)},actions={if(syncStatus?.error!=null)Text("!",color=MaterialTheme.colorScheme.error,fontWeight=FontWeight.Bold) else if(pending>0)Text("↻ $pending",color=MaterialTheme.colorScheme.primary);IconButton(onClick={familyOpen=true}){Icon(if(membership==null)Icons.Default.GroupAdd else Icons.Default.Group,"Семья")};IconButton(onClick={vm?.shareCsv(context)}){Icon(Icons.Default.FileDownload,"Экспорт CSV")}}) },bottomBar={QuickActions(active,vm)}) { pad ->
         LazyColumn(Modifier.fillMaxSize().padding(pad),contentPadding=PaddingValues(16.dp,8.dp,16.dp,32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             item { StatusCard(active,state.events,now,vm) }
             item { DayHeader(state.selectedDay,{vm?.moveDay(-1)},{vm?.moveDay(1)}) }
@@ -66,7 +72,12 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
         }
     }
     edit?.let { original -> EditDialog(original,onDismiss={edit=null},onSave={vm?.updateEvent(it);edit=null},onDelete={vm?.delete(original);edit=null}) }
+    if(familyOpen&&vm!=null)FamilyDialog(membership,vm,initialInvite.orEmpty()){familyOpen=false}
 }
+
+@Composable private fun FamilyDialog(membership:FamilyMembership?,vm:MainViewModel,initialCode:String,onDismiss:()->Unit){var name by remember{mutableStateOf("")};var code by remember{mutableStateOf(initialCode.ifBlank{membership?.inviteCode.orEmpty()})};var error by remember{mutableStateOf<String?>(null)};var busy by remember{mutableStateOf(false)};val members=vm.familyMembers.collectAsStateWithLifecycle().value;AlertDialog(onDismissRequest=onDismiss,title={Text(if(membership==null)"Семейная синхронизация" else "Ваша семья")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){if(membership==null){OutlinedTextField(name,{name=it},label={Text("Ваше имя")},singleLine=true);OutlinedTextField(code,{code=it.uppercase()},label={Text("Код приглашения")},singleLine=true);Text("Оставьте код пустым, чтобы создать новую семью.",style=MaterialTheme.typography.bodySmall)}else{Text("Участники: ${members.joinToString{it.displayName}.ifBlank{membership.displayName}}");if(code.isNotBlank()){QrCode(code);Text("Код: $code",fontWeight=FontWeight.Bold)};Button(onClick={busy=true;vm.createInvite{result->busy=false;result.onSuccess{code=it}.onFailure{error=it.message}}},enabled=!busy){Text("Создать приглашение")};OutlinedButton(onClick={vm.retrySync()}){Text("Синхронизировать сейчас")}};error?.let{Text(it,color=MaterialTheme.colorScheme.error)}}},confirmButton={if(membership==null)Button(onClick={busy=true;if(code.isBlank())vm.createFamily(name){result->busy=false;result.onSuccess{code=it}.onFailure{error=it.message}} else vm.joinFamily(code,name){result->busy=false;result.onSuccess{onDismiss()}.onFailure{error=it.message}}},enabled=!busy&&name.isNotBlank()){Text(if(code.isBlank())"Создать семью" else "Подключиться")}else TextButton(onClick=onDismiss){Text("Готово")}},dismissButton={TextButton(onClick=onDismiss){Text("Закрыть")}})}
+
+@Composable private fun QrCode(value:String){val bitmap=remember(value){val matrix=com.google.zxing.MultiFormatWriter().encode("babylog://join?code=$value",com.google.zxing.BarcodeFormat.QR_CODE,420,420);android.graphics.Bitmap.createBitmap(420,420,android.graphics.Bitmap.Config.RGB_565).apply{for(y in 0 until 420)for(x in 0 until 420)setPixel(x,y,if(matrix[x,y])android.graphics.Color.BLACK else android.graphics.Color.WHITE)}};Image(bitmap.asImageBitmap(),"QR-код приглашения",Modifier.size(180.dp))}
 
 @Composable private fun QuickActions(active:BabyEvent?,vm:MainViewModel?){
     Surface(shadowElevation=12.dp,tonalElevation=3.dp){Column(Modifier.navigationBarsPadding().padding(12.dp,10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -111,7 +122,7 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
 }
 @Composable private fun MiniStat(side:String,label:String,value:String,modifier:Modifier){Surface(modifier,shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surfaceVariant){Row(Modifier.padding(10.dp),verticalAlignment=Alignment.CenterVertically){Surface(Modifier.size(30.dp),CircleShape,color=MaterialTheme.colorScheme.primaryContainer){Box(contentAlignment=Alignment.Center){Text(side,fontWeight=FontWeight.Bold)}};Spacer(Modifier.width(8.dp));Column{Text(value,fontWeight=FontWeight.Bold,fontSize=17.sp,maxLines=1);Text(label,fontSize=12.sp)}}}}
 @Composable private fun EventMarker(e:BabyEvent,modifier:Modifier=Modifier){val color=if(e.type==EventType.SLEEP)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer;Surface(modifier,shape=CircleShape,color=color){Box(contentAlignment=Alignment.Center){when(e.detail){"LEFT"->Text("L",fontWeight=FontWeight.Bold,fontSize=17.sp);"RIGHT"->Text("R",fontWeight=FontWeight.Bold,fontSize=17.sp);"BOTTLE"->Icon(Icons.Default.LocalDrink,"Бутылочка",Modifier.size(22.dp));else->Icon(Icons.Default.Bedtime,"Сон",Modifier.size(22.dp))}}}}
-@Composable private fun EventRow(e:BabyEvent,now:Long,edit:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){EventMarker(e,Modifier.size(38.dp));Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(if(e.type==EventType.SLEEP)"Сон · ${posName(SleepPosition.valueOf(e.detail))}" else "Кормление · ${feedName(e.detail)}",fontWeight=FontWeight.SemiBold);Text("${clock(e.startedAt)} – ${e.endedAt?.let(::clock)?:"сейчас"} · ${durationCompact((e.endedAt?:now)-e.startedAt)}",color=MaterialTheme.colorScheme.onSurfaceVariant)};IconButton(edit){Icon(Icons.Default.Edit,"Изменить")}}}
+@Composable private fun EventRow(e:BabyEvent,now:Long,edit:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){EventMarker(e,Modifier.size(38.dp));Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text((if(e.type==EventType.SLEEP)"Сон · ${posName(SleepPosition.valueOf(e.detail))}" else "Кормление · ${feedName(e.detail)}")+(e.authorName?.let{" · $it"}?:""),fontWeight=FontWeight.SemiBold);Text("${clock(e.startedAt)} – ${e.endedAt?.let(::clock)?:"сейчас"} · ${durationCompact((e.endedAt?:now)-e.startedAt)}",color=MaterialTheme.colorScheme.onSurfaceVariant)};IconButton(edit){Icon(Icons.Default.Edit,"Изменить")}}}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun EditDialog(e:BabyEvent,onDismiss:()->Unit,onSave:(BabyEvent)->Unit,onDelete:()->Unit){

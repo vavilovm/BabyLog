@@ -24,6 +24,7 @@ class WidgetScreenshotTest {
     @get:Rule val paparazzi=Paparazzi(deviceConfig=DeviceConfig(screenWidth=320,screenHeight=205,orientation=ScreenOrientation.LANDSCAPE,density=Density.MEDIUM))
     @Test fun feedingCompact_selection()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(null,null,NOW),null)}}
     @Test fun feedingCompact_activeLeft()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"LEFT",NOW-42_000),null,NOW),"00:42")}}
+    @Test fun feedingCompact_finishedUsesEndTime(){val ui=feedingWidgetUi(null,BabyEvent(1,EventType.FEEDING,"RIGHT",NOW-120_000,NOW-30_000),NOW);org.junit.Assert.assertTrue(ui.status.contains("0:30 назад"))}
     @Test fun sleepCompact_onlyLeftRight()=paparazzi.snapshot{BabyTheme{StandardPreview(sleepWidgetUi(null,NOW),null)}}
 }
 

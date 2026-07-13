@@ -99,7 +99,7 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
     }}
 }
 
-@Composable private fun SleepButton(position:SleepPosition,modifier:Modifier,onClick:()->Unit){val left=position==SleepPosition.LEFT;Button(onClick=onClick,modifier=modifier.height(108.dp),contentPadding=PaddingValues(2.dp)){Image(painterResource(if(left)R.drawable.duck_sleep_left else R.drawable.duck_sleep_right),if(left)"Отметить сон на левом боку" else "Отметить сон на правом боку",Modifier.fillMaxSize())}}
+@Composable private fun SleepButton(position:SleepPosition,modifier:Modifier,onClick:()->Unit){val left=position==SleepPosition.LEFT;Button(onClick=onClick,modifier=modifier.height(58.dp),contentPadding=PaddingValues(2.dp)){Image(painterResource(if(left)R.drawable.duck_sleep_left else R.drawable.duck_sleep_right),if(left)"Отметить сон на левом боку" else "Отметить сон на правом боку",Modifier.fillMaxSize())}}
 
 @Composable private fun StatusCard(active:BabyEvent?, events:List<BabyEvent>, now:Long, vm:MainViewModel?,onStats:()->Unit) {
     val lastFeed=events.firstOrNull{it.type==EventType.FEEDING}

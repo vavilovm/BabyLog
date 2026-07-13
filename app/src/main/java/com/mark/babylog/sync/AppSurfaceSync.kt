@@ -111,7 +111,7 @@ object AppSurfaceSync {
         val open=PendingIntent.getActivity(context,2,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val actions=feedingStartActions()
         val summary=lastFeedSummary(lastFeed)
-        val compact=feedingStartCompactNotification(context,actions,summary)
+        val compact=feedingStartCompactNotification(context,actions,lastFeed)
         val builder=NotificationCompat.Builder(context,FEEDING_START_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle("Начать кормление").setContentText(summary?:"Выберите способ кормления").setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STATUS).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
         actions.forEach{builder.addAction(0,it.label,action(context,it.command,it.request))}
         manager.notify(FEEDING_START_NOTIFICATION_ID,builder.build())
@@ -131,8 +131,8 @@ object AppSurfaceSync {
         }
     }
 
-    private fun feedingStartCompactNotification(context:Context,actions:List<CompactAction>,summary:String?)=RemoteViews(context.packageName,R.layout.notification_feeding_start_compact).apply{
-        setTextViewText(R.id.notification_feeding_summary,summary?:"🍼 Начать")
+    private fun feedingStartCompactNotification(context:Context,actions:List<CompactAction>,lastFeed:BabyEvent?)=RemoteViews(context.packageName,R.layout.notification_timer_compact).apply{
+        setTextViewText(R.id.notification_chronometer,lastFeedCompactSummary(lastFeed)?:"🍼 Начать")
         actions.forEachIndexed{index,item->
             val id=listOf(R.id.notification_action_1,R.id.notification_action_2,R.id.notification_action_3)[index]
             setTextViewText(id,item.label)
@@ -160,6 +160,10 @@ object AppSurfaceSync {
 
     private fun lastFeedSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
         "Последнее: ${feedName(it.detail)} · ${formatElapsed((now-it.startedAt).coerceAtLeast(0))} назад"
+    }
+
+    private fun lastFeedCompactSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
+        "🍼 ${feedName(it.detail)} · ${formatElapsed((now-it.startedAt).coerceAtLeast(0))}"
     }
 
     private fun formatElapsed(elapsed:Long):String{

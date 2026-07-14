@@ -15,8 +15,8 @@ android {
         applicationId = "com.mark.babylog"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.6.9"
+        versionCode = 23
+        versionName = "0.6.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }

@@ -39,4 +39,14 @@ class RepositorySyncTest{
         assertEquals(3_000L,db.events().allForTest().single().endedAt)
         assertEquals("LOG_SLEEP",db.events().pending().single().command)
     }
+
+    @Test fun bottleVolumeIsSavedWhenFeedingStops()=runTest{
+        db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
+        repository.startFeeding(FeedingKind.BOTTLE,1_000)
+        repository.stopBottle(120,61_000)
+        val event=db.events().allForTest().single()
+        assertEquals("BOTTLE:120",event.detail)
+        assertEquals(61_000L,event.endedAt)
+        assertEquals("STOP",db.events().pending().last().command)
+    }
 }

@@ -34,6 +34,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun logPumping(side: FeedingKind, volumeMl: Int) = viewModelScope.launch { repository.logPumping(side,volumeMl);sync() }
     fun changePosition(position: SleepPosition) = viewModelScope.launch { repository.changePosition(position);sync() }
     fun stop() = viewModelScope.launch { repository.stop();sync() }
+    fun stopBottle(volumeMl: Int) = viewModelScope.launch { repository.stopBottle(volumeMl);sync() }
     fun updateEvent(event: BabyEvent) = viewModelScope.launch { repository.updateEvent(event);sync() }
     fun delete(event: BabyEvent) = viewModelScope.launch { repository.deleteEvent(event);sync() }
     fun createFamily(name:String,onDone:(Result<String>)->Unit)=viewModelScope.launch{onDone(runCatching{babyApp.familySync.createFamily(name)})}

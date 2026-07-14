@@ -9,6 +9,9 @@ enum class FeedingKind { LEFT, RIGHT, BOTTLE }
 enum class SleepPosition { LEFT, RIGHT, BACK, OTHER }
 enum class SyncState { LOCAL_ONLY, PENDING, SYNCED, FAILED, CONFLICT }
 
+fun feedingKindOf(detail:String)=runCatching{FeedingKind.valueOf(detail.substringBefore(':'))}.getOrDefault(FeedingKind.BOTTLE)
+fun bottleVolumeMl(detail:String)=detail.takeIf{feedingKindOf(it)==FeedingKind.BOTTLE}?.substringAfter(':',"")?.toIntOrNull()
+
 @Entity(tableName="events",indices=[Index(value=["remoteId"],unique=true)])
 data class BabyEvent(
     @PrimaryKey(autoGenerate=true) val id:Long=0,

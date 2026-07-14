@@ -4,7 +4,7 @@ import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
-enum class EventType { FEEDING, SLEEP }
+enum class EventType { FEEDING, PUMPING, SLEEP }
 enum class FeedingKind { LEFT, RIGHT, BOTTLE }
 enum class SleepPosition { LEFT, RIGHT, BACK, OTHER }
 enum class SyncState { LOCAL_ONLY, PENDING, SYNCED, FAILED, CONFLICT }
@@ -82,6 +82,12 @@ interface EventDao {
     }
     @Transaction suspend fun startSleep(position:SleepPosition,time:Long,owner:FamilyMembership?=null):BabyEvent {
         val value=BabyEvent(type=EventType.SLEEP,detail=position.name,startedAt=time,endedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+        return value.copy(id=insert(value))
+    }
+    @Transaction suspend fun logPumping(side:FeedingKind,volumeMl:Int,time:Long,owner:FamilyMembership?=null):BabyEvent {
+        require(side==FeedingKind.LEFT||side==FeedingKind.RIGHT)
+        require(volumeMl>0)
+        val value=BabyEvent(type=EventType.PUMPING,detail="${side.name}:$volumeMl",startedAt=time,endedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
         return value.copy(id=insert(value))
     }
     @Transaction suspend fun stopActive(time:Long):BabyEvent? {val current=active()?:return null;finish(current.id,time);return current.copy(endedAt=time,updatedAt=time)}

@@ -159,7 +159,7 @@ object AppSurfaceSync {
     )
 
     private fun lastFeedSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
-        "Последнее: ${feedIcon(it.detail)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))} назад"
+        "${feedIcon(it.detail)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))} назад"
     }
 
     private fun lastFeedCompactSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{

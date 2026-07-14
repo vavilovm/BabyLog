@@ -2,6 +2,7 @@ package com.mark.babylog
 
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
+import androidx.compose.material3.MaterialTheme
 import com.mark.babylog.data.*
 import org.junit.Rule
 import org.junit.Test
@@ -15,5 +16,6 @@ class DashboardScreenshotTest {
     @Test fun pumping_isShownInHistory(){val day=java.time.LocalDate.now();val now=day.atTime(19,23).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();paparazzi.snapshot{BabyTheme{BabyScreen(UiState(events=listOf(BabyEvent(1,EventType.PUMPING,"RIGHT:120",now,now),BabyEvent(2,EventType.FEEDING,"LEFT",now-2*3600000,now-105*60000))),fixedNow=now)}}}
     @Test fun pumpingDefault_isOppositeOfLatestBreastfeeding(){val now=System.currentTimeMillis();assert(defaultPumpingSide(listOf(BabyEvent(1,EventType.FEEDING,"RIGHT",now,now)))==FeedingKind.LEFT);assert(defaultPumpingSide(listOf(BabyEvent(1,EventType.FEEDING,"LEFT",now,now)))==FeedingKind.RIGHT)}
     @Test fun bottleSummary_showsLastAndNextBreast(){val day=java.time.LocalDate.now();val now=day.atTime(19,23).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();paparazzi.snapshot{BabyTheme{BabyScreen(UiState(events=listOf(BabyEvent(1,EventType.FEEDING,"BOTTLE",now-10*60_000,now-5*60_000),BabyEvent(2,EventType.FEEDING,"LEFT",now-3*60*60_000,now-2*60*60_000))),fixedNow=now)}}}
+    @Test fun bottleSummary_isLegibleInDarkTheme(){val day=java.time.LocalDate.now();val now=day.atTime(19,23).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();paparazzi.snapshot{MaterialTheme(colorScheme=Dark){BabyScreen(UiState(events=listOf(BabyEvent(1,EventType.FEEDING,"BOTTLE",now-10*60_000,now-5*60_000),BabyEvent(2,EventType.FEEDING,"LEFT",now-3*60*60_000,now-2*60*60_000))),fixedNow=now)}}}
     @Test fun editTime_hasMinuteShortcuts(){val day=java.time.LocalDate.now();val now=day.atTime(19,23).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();paparazzi.snapshot{BabyTheme{EditDialog(BabyEvent(1,EventType.FEEDING,"LEFT",now-30*60_000,now-5*60_000),{},{},{})}}}
 }

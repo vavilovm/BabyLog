@@ -51,7 +51,7 @@ class MainActivity : ComponentActivity() {
 @Composable private fun NotificationPermission(){val context=LocalContext.current;val scope=rememberCoroutineScope();val launcher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)scope.launch{AppSurfaceSync.refresh(context)}};LaunchedEffect(Unit){if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)launcher.launch(Manifest.permission.POST_NOTIFICATIONS)}}
 
 private val Light = lightColorScheme(primary=Color(0xFF65558F), secondary=Color(0xFF7D5260), surfaceVariant=Color(0xFFE7E0EC))
-private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0xFFEFB8C8), background=Color(0xFF141218), surface=Color(0xFF211F26))
+internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0xFFEFB8C8), background=Color(0xFF141218), surface=Color(0xFF211F26))
 @Composable fun BabyTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme=if(isSystemInDarkTheme()) Dark else Light, typography=Typography(), content=content)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -128,14 +128,15 @@ internal fun defaultPumpingSide(events:List<BabyEvent>):FeedingKind=when(events.
 @Composable private fun StatusCard(active:BabyEvent?, events:List<BabyEvent>, now:Long, vm:MainViewModel?,onStats:()->Unit) {
     val lastFeed=events.firstOrNull{it.type==EventType.FEEDING}
     val shown=active?:lastFeed
-    Card(colors=CardDefaults.cardColors(containerColor=if(active!=null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),modifier=Modifier.fillMaxWidth().clickable(onClick=onStats)) { Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+    val metaColor=if(active!=null)MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    Card(colors=CardDefaults.cardColors(containerColor=if(active!=null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,contentColor=metaColor),modifier=Modifier.fillMaxWidth().clickable(onClick=onStats)) { Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically){
             if(shown!=null)EventMarker(shown,Modifier.size(42.dp)) else Surface(Modifier.size(42.dp),CircleShape,color=MaterialTheme.colorScheme.primaryContainer){Box(contentAlignment=Alignment.Center){Icon(Icons.Default.ChildCare,null)}}
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)){
                 Text(when{active?.type==EventType.SLEEP->"Сон · ${posName(SleepPosition.valueOf(active.detail))}";active?.type==EventType.FEEDING->"Кормление · ${feedName(active.detail)}";lastFeed!=null->"Последнее кормление";else->"Всё спокойно"},fontSize=21.sp,fontWeight=FontWeight.Bold,maxLines=1)
-                if(active!=null)Text("${clock(active.startedAt)} · ${durationLive(now-active.startedAt)}",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                else if(lastFeed!=null){Text("${feedName(lastFeed.detail)} · ${agoCompact(now-(lastFeed.endedAt?:lastFeed.startedAt))}",color=MaterialTheme.colorScheme.onSurfaceVariant);if(lastFeed.detail==FeedingKind.BOTTLE.name)lastBreastfeedingSummary(events)?.let{Text(it,color=MaterialTheme.colorScheme.primary,fontWeight=FontWeight.Medium)}}
+                if(active!=null)Text("${clock(active.startedAt)} · ${durationLive(now-active.startedAt)}",color=metaColor,fontWeight=FontWeight.Medium)
+                else if(lastFeed!=null){Text("${feedName(lastFeed.detail)} · ${agoCompact(now-(lastFeed.endedAt?:lastFeed.startedAt))}",color=metaColor,fontWeight=FontWeight.Medium);if(lastFeed.detail==FeedingKind.BOTTLE.name)lastBreastfeedingSummary(events)?.let{Text(it,color=MaterialTheme.colorScheme.primary,fontWeight=FontWeight.Medium)}}
             }
         }
         if(active!=null)Button(onClick={vm?.stop()},modifier=Modifier.fillMaxWidth().height(44.dp),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Icon(Icons.Default.Stop,null);Spacer(Modifier.width(6.dp));Text("Остановить")}

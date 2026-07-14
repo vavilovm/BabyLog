@@ -12,10 +12,9 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
-import java.time.*
 import java.util.*
 
-data class UiState(val events: List<BabyEvent> = emptyList(), val segments: List<SleepSegment> = emptyList(), val selectedDay: LocalDate = LocalDate.now()) {
+data class UiState(val events: List<BabyEvent> = emptyList(), val segments: List<SleepSegment> = emptyList()) {
     val active get() = events.firstOrNull { it.type == EventType.FEEDING && it.endedAt == null }
 }
 
@@ -23,11 +22,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val babyApp=app as BabyLogApp
     private val dao = babyApp.database.events()
     private val repository=babyApp.repository
-    private val day = MutableStateFlow(LocalDate.now())
-    val state = combine(dao.observeAll(), dao.observeSegments(), day) { e, s, d -> UiState(e, s, d) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
+    val state = combine(dao.observeAll(), dao.observeSegments()) { e, s -> UiState(e, s) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
     init { viewModelScope.launch { sync() } }
 
-    fun moveDay(delta: Long) { day.value = day.value.plusDays(delta) }
     val membership=repository.membership.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),null)
     val pendingCount=repository.pendingCount.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),0)
     val syncStatus=babyApp.familySync.status.asStateFlow()

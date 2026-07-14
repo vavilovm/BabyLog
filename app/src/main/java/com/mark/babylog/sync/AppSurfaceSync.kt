@@ -145,7 +145,7 @@ object AppSurfaceSync {
         return if(active.type==EventType.FEEDING)listOf(
             item("LEFT","L","FEED_LEFT",11),
             item("RIGHT","R","FEED_RIGHT",12),
-            item("BOTTLE","Бутылочка","FEED_BOTTLE",13)
+            item("BOTTLE","🍼","FEED_BOTTLE",13)
         )else listOf(
             item("LEFT","Лево","SLEEP_LEFT",14),
             item("RIGHT","Право","SLEEP_RIGHT",15)
@@ -155,15 +155,15 @@ object AppSurfaceSync {
     private fun feedingStartActions()=listOf(
         CompactAction("L","FEED_LEFT",21),
         CompactAction("R","FEED_RIGHT",22),
-        CompactAction("Бутылочка","FEED_BOTTLE",23)
+        CompactAction("🍼","FEED_BOTTLE",23)
     )
 
     private fun lastFeedSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
-        "Последнее: ${feedName(it.detail)} · ${formatElapsed((now-it.startedAt).coerceAtLeast(0))} назад"
+        "Последнее: ${feedIcon(it.detail)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))} назад"
     }
 
     private fun lastFeedCompactSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
-        "🍼 ${feedName(it.detail)} · ${formatElapsed((now-it.startedAt).coerceAtLeast(0))}"
+        "${feedIcon(it.detail)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))}"
     }
 
     private fun formatElapsed(elapsed:Long):String{
@@ -177,6 +177,7 @@ object AppSurfaceSync {
 
     private fun action(context:Context,command:String,request:Int)=PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     private fun feedName(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"бутылочка"}
+    private fun feedIcon(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"🍼"}
     private fun sleepName(v:String)=when(v){"LEFT"->"голова слева";"RIGHT"->"голова справа";else->"другое"}
 }
 

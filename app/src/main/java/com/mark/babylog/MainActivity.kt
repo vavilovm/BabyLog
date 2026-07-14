@@ -42,8 +42,6 @@ import com.mark.babylog.data.*
 import com.mark.babylog.sync.AppSurfaceSync
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.time.*
-import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
@@ -68,23 +66,21 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
     val membership=vm?.membership?.collectAsStateWithLifecycle()?.value
     val pending=vm?.pendingCount?.collectAsStateWithLifecycle()?.value?:0
     val syncStatus=vm?.syncStatus?.collectAsStateWithLifecycle()?.value
-    val zone=ZoneId.systemDefault(); val start=state.selectedDay.atStartOfDay(zone).toInstant().toEpochMilli(); val end=state.selectedDay.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-    val today=state.events.filter { it.startedAt in start until end }
+    val recent=state.events.take(100)
     val active=state.active
     Scaffold(topBar={ TopAppBar(title={Text("BabyLog",fontWeight=FontWeight.Bold)},actions={if(syncStatus?.error!=null)Text("!",color=MaterialTheme.colorScheme.error,fontWeight=FontWeight.Bold) else if(pending>0)Text("↻ $pending",color=MaterialTheme.colorScheme.primary);IconButton(onClick={familyOpen=true}){Icon(if(membership==null)Icons.Default.GroupAdd else Icons.Default.Group,"Семья")};IconButton(onClick={vm?.shareCsv(context)}){Icon(Icons.Default.FileDownload,"Экспорт CSV")}}) }) { pad ->
         LazyColumn(Modifier.fillMaxSize().padding(pad),contentPadding=PaddingValues(16.dp,8.dp,16.dp,32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             item { StatusCard(active,state.events,now,vm){statsOpen=true} }
-            item { DayHeader(state.selectedDay,{vm?.moveDay(-1)},{vm?.moveDay(1)}) }
             item { QuickActions(active,state.events,vm,{pumpingOpen=true}) }
-            if(today.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp),contentAlignment=Alignment.Center){Text("Сегодня событий пока нет",color=MaterialTheme.colorScheme.onSurfaceVariant)} }
-            else item { Text("История",fontWeight=FontWeight.Bold,fontSize=18.sp,modifier=Modifier.padding(top=4.dp)) }
-            items(today,key={it.id}) { EventRow(it,now){edit=it} }
+            if(recent.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp),contentAlignment=Alignment.Center){Text("Событий пока нет",color=MaterialTheme.colorScheme.onSurfaceVariant)} }
+            else item { Text("Последние действия",fontWeight=FontWeight.Bold,fontSize=18.sp,modifier=Modifier.padding(top=4.dp)) }
+            items(recent,key={it.id}) { EventRow(it,now){edit=it} }
         }
     }
     edit?.let { original -> EditDialog(original,onDismiss={edit=null},onSave={vm?.updateEvent(it);edit=null},onDelete={vm?.delete(original);edit=null}) }
     if(pumpingOpen)PumpingDialog(defaultPumpingSide(state.events),onDismiss={pumpingOpen=false}) { side, volume -> vm?.logPumping(side,volume);pumpingOpen=false }
     if(familyOpen&&vm!=null)FamilyDialog(membership,vm,initialInvite.orEmpty()){familyOpen=false}
-    if(statsOpen)AlertDialog(onDismissRequest={statsOpen=false},title={Text("За ${if(state.selectedDay==LocalDate.now())"сегодня" else state.selectedDay.format(DateTimeFormatter.ofPattern("d MMMM"))}")},text={Stats(today,state.segments,now,false)},confirmButton={TextButton(onClick={statsOpen=false}){Text("Готово")}})
+    if(statsOpen)AlertDialog(onDismissRequest={statsOpen=false},title={Text("Последние 100 действий")},text={Stats(recent,state.segments,now,false)},confirmButton={TextButton(onClick={statsOpen=false}){Text("Готово")}})
 }
 
 @Composable private fun FamilyDialog(membership:FamilyMembership?,vm:MainViewModel,initialCode:String,onDismiss:()->Unit){var name by remember{mutableStateOf("")};var code by remember{mutableStateOf(initialCode.ifBlank{membership?.inviteCode.orEmpty()})};var error by remember{mutableStateOf<String?>(null)};var busy by remember{mutableStateOf(false)};val members=vm.familyMembers.collectAsStateWithLifecycle().value;AlertDialog(onDismissRequest=onDismiss,title={Text(if(membership==null)"Семейная синхронизация" else "Ваша семья")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){if(membership==null){OutlinedTextField(name,{name=it},label={Text("Ваше имя")},singleLine=true);OutlinedTextField(code,{code=it.uppercase()},label={Text("Код приглашения")},singleLine=true);Text("Оставьте код пустым, чтобы создать новую семью.",style=MaterialTheme.typography.bodySmall)}else{Text("Участники: ${members.joinToString{it.displayName}.ifBlank{membership.displayName}}");if(code.isNotBlank()){QrCode(code);Text("Код: $code",fontWeight=FontWeight.Bold)};Button(onClick={busy=true;vm.createInvite{result->busy=false;result.onSuccess{code=it}.onFailure{error=it.message}}},enabled=!busy){Text("Создать приглашение")};OutlinedButton(onClick={vm.retrySync()}){Text("Синхронизировать сейчас")}};error?.let{Text(it,color=MaterialTheme.colorScheme.error)}}},confirmButton={if(membership==null)Button(onClick={busy=true;if(code.isBlank())vm.createFamily(name){result->busy=false;result.onSuccess{code=it}.onFailure{error=it.message}} else vm.joinFamily(code,name){result->busy=false;result.onSuccess{onDismiss()}.onFailure{error=it.message}}},enabled=!busy&&name.isNotBlank()){Text(if(code.isBlank())"Создать семью" else "Подключиться")}else TextButton(onClick=onDismiss){Text("Готово")}},dismissButton={TextButton(onClick=onDismiss){Text("Закрыть")}})}
@@ -115,9 +111,9 @@ private val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0x
     LaunchedEffect(Unit) { focusRequester.requestFocus();keyboard?.show() }
     AlertDialog(onDismissRequest=onDismiss,title={Text("Сцеживание")},text={Column(verticalArrangement=Arrangement.spacedBy(14.dp)){
         Text("Укажите объём сцеженного молока. Время завершения будет записано как сейчас.",style=MaterialTheme.typography.bodyMedium)
-        OutlinedTextField(value=volume,onValueChange={volume=it.filter(Char::isDigit)},label={Text("Объём, мл")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth().focusRequester(focusRequester))
         Text("Из какой груди?",fontWeight=FontWeight.SemiBold)
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(selected=side==FeedingKind.LEFT,onClick={side=FeedingKind.LEFT},label={Text("Левая")});FilterChip(selected=side==FeedingKind.RIGHT,onClick={side=FeedingKind.RIGHT},label={Text("Правая")})}
+        OutlinedTextField(value=volume,onValueChange={volume=it.filter(Char::isDigit)},label={Text("Объём, мл")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth().focusRequester(focusRequester))
     }},confirmButton={TextButton(onClick={onSave(side,volume.toInt())},enabled=volume.toIntOrNull()?.let{it>0}==true){Text("Сохранить")}},dismissButton={TextButton(onClick=onDismiss){Text("Отмена")}})
 }
 
@@ -139,7 +135,7 @@ internal fun defaultPumpingSide(events:List<BabyEvent>):FeedingKind=when(events.
             Column(Modifier.weight(1f)){
                 Text(when{active?.type==EventType.SLEEP->"Сон · ${posName(SleepPosition.valueOf(active.detail))}";active?.type==EventType.FEEDING->"Кормление · ${feedName(active.detail)}";lastFeed!=null->"Последнее кормление";else->"Всё спокойно"},fontSize=21.sp,fontWeight=FontWeight.Bold,maxLines=1)
                 if(active!=null)Text("${clock(active.startedAt)} · ${durationLive(now-active.startedAt)}",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                else if(lastFeed!=null)Text("${feedName(lastFeed.detail)} · ${agoCompact(now-(lastFeed.endedAt?:lastFeed.startedAt))}",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                else if(lastFeed!=null){Text("${feedName(lastFeed.detail)} · ${agoCompact(now-(lastFeed.endedAt?:lastFeed.startedAt))}",color=MaterialTheme.colorScheme.onSurfaceVariant);if(lastFeed.detail==FeedingKind.BOTTLE.name)lastBreastfeedingSummary(events)?.let{Text(it,color=MaterialTheme.colorScheme.primary,fontWeight=FontWeight.Medium)}}
             }
         }
         if(active!=null)Button(onClick={vm?.stop()},modifier=Modifier.fillMaxWidth().height(44.dp),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Icon(Icons.Default.Stop,null);Spacer(Modifier.width(6.dp));Text("Остановить")}
@@ -147,7 +143,6 @@ internal fun defaultPumpingSide(events:List<BabyEvent>):FeedingKind=when(events.
 }
 
 @Composable private fun ActionButton(text:String,icon:androidx.compose.ui.graphics.vector.ImageVector?,modifier:Modifier,isStop:Boolean=false,onClick:()->Unit){FilledTonalButton(onClick=onClick,modifier=modifier.height(64.dp),contentPadding=PaddingValues(6.dp),colors=if(isStop)ButtonDefaults.filledTonalButtonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError) else ButtonDefaults.filledTonalButtonColors()){Column(horizontalAlignment=Alignment.CenterHorizontally){if(icon!=null)Icon(icon,null);Text(text,fontSize=if(icon==null)20.sp else 12.sp,fontWeight=if(icon==null)FontWeight.Bold else FontWeight.Normal)}}}
-@Composable private fun DayHeader(day:LocalDate,prev:()->Unit,next:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){IconButton(prev){Icon(Icons.Default.ChevronLeft,"Предыдущий день")};Text(if(day==LocalDate.now())"Сегодня" else day.format(DateTimeFormatter.ofPattern("d MMMM")),fontWeight=FontWeight.Bold,fontSize=19.sp);IconButton(next,enabled=day<LocalDate.now()){Icon(Icons.Default.ChevronRight,"Следующий день")}}}
 @Composable private fun Stats(events:List<BabyEvent>,segments:List<SleepSegment>,now:Long,showTitle:Boolean=true){
     fun feed(kind:FeedingKind)=events.filter{it.type==EventType.FEEDING&&it.detail==kind.name}.sumOf{(it.endedAt?:now)-it.startedAt}
     fun side(p:SleepPosition)=events.count{it.type==EventType.SLEEP&&it.detail==p.name}
@@ -160,22 +155,24 @@ internal fun defaultPumpingSide(events:List<BabyEvent>):FeedingKind=when(events.
 @Composable private fun EventRow(e:BabyEvent,now:Long,edit:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){EventMarker(e,Modifier.size(38.dp));Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(eventTitle(e)+(e.authorName?.let{" · $it"}?:""),fontWeight=FontWeight.SemiBold);Text(if(e.type==EventType.SLEEP)clock(e.startedAt) else if(e.type==EventType.PUMPING)clock(e.endedAt?:e.startedAt) else "${clock(e.startedAt)} – ${e.endedAt?.let(::clock)?:"сейчас"} · ${if(e.endedAt==null)durationLive(now-e.startedAt) else durationCompact(e.endedAt-e.startedAt)}",color=MaterialTheme.colorScheme.onSurfaceVariant)};IconButton(edit){Icon(Icons.Default.Edit,"Изменить")}}}
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun EditDialog(e:BabyEvent,onDismiss:()->Unit,onSave:(BabyEvent)->Unit,onDelete:()->Unit){
+@Composable internal fun EditDialog(e:BabyEvent,onDismiss:()->Unit,onSave:(BabyEvent)->Unit,onDelete:()->Unit){
     var start by remember { mutableLongStateOf(e.startedAt) }; var end by remember { mutableStateOf(e.endedAt) }; var detail by remember { mutableStateOf(e.detail) }
     var picking by remember { mutableStateOf<String?>(null) }
     val options=if(e.type==EventType.FEEDING) FeedingKind.entries.map{it.name to feedName(it.name)} else listOf(SleepPosition.LEFT,SleepPosition.RIGHT).map{it.name to posName(it)}
     AlertDialog(onDismissRequest=onDismiss,title={Text("Изменить событие")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
-        Text("Время",fontWeight=FontWeight.SemiBold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={picking="start"},modifier=Modifier.weight(1f)){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(5.dp));Text(if(e.type==EventType.SLEEP)clock(start) else "Начало ${clock(start)}")};if(e.type==EventType.FEEDING)OutlinedButton(onClick={picking="end"},modifier=Modifier.weight(1f)){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(5.dp));Text("Конец ${end?.let(::clock)?:"сейчас"}")}}
+        Text("Время",fontWeight=FontWeight.SemiBold);Text(if(e.type==EventType.SLEEP)"Отметка" else "Начало",style=MaterialTheme.typography.labelMedium);OutlinedButton(onClick={picking="start"},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(5.dp));Text(clock(start))};MinuteShortcuts { start=(start+it*60_000).coerceAtLeast(0) };if(e.type==EventType.FEEDING){Text("Конец",style=MaterialTheme.typography.labelMedium);OutlinedButton(onClick={picking="end"},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(5.dp));Text(end?.let(::clock)?:"сейчас")};MinuteShortcuts { delta->end=(end?:System.currentTimeMillis()+delta*60_000).coerceAtLeast(start) }}
         Text("Тип / положение",fontWeight=FontWeight.SemiBold);options.forEach{(key,label)->FilterChip(selected=detail==key,onClick={detail=key},label={if(e.type==EventType.SLEEP)SleepSideImage(SleepPosition.valueOf(key),Modifier.size(40.dp)) else Text(label)})}
     }},confirmButton={TextButton(onClick={onSave(e.copy(startedAt=start,endedAt=if(e.type==EventType.SLEEP)start else end?.coerceAtLeast(start),detail=detail))}){Text("Сохранить")}},dismissButton={Row{TextButton(onClick=onDelete){Text("Удалить",color=MaterialTheme.colorScheme.error)};TextButton(onClick=onDismiss){Text("Отмена")}}})
     picking?.let{target->val base=if(target=="start")start else end?:System.currentTimeMillis();val cal=remember(target){java.util.Calendar.getInstance().apply{timeInMillis=base}};val picker=rememberTimePickerState(cal.get(java.util.Calendar.HOUR_OF_DAY),cal.get(java.util.Calendar.MINUTE),true);AlertDialog(onDismissRequest={picking=null},title={Text(if(target=="start")"Время начала" else "Время окончания")},text={TimePicker(picker)},confirmButton={TextButton(onClick={val chosen=withTime(base,picker.hour,picker.minute);if(target=="start")start=chosen else end=chosen;picking=null}){Text("Готово")}},dismissButton={TextButton(onClick={picking=null}){Text("Отмена")}})}
 }
+@Composable private fun MinuteShortcuts(onMove:(Long)->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(-5L,-1L,1L,5L).forEach{delta->AssistChip(onClick={onMove(delta)},label={Text(if(delta>0)"+$delta мин" else "$delta мин")},modifier=Modifier.weight(1f))}}}
 private fun durationCompact(ms:Long):String {val totalMinutes=ms.coerceAtLeast(0)/60000;val h=totalMinutes/60;val m=totalMinutes%60;return if(h>0)"$h ч ${m.toString().padStart(2,'0')} мин" else "$m мин"}
 private fun durationLive(ms:Long):String {val total=ms.coerceAtLeast(0)/1000;val h=total/3600;val m=(total%3600)/60;val s=total%60;return if(h>0)"$h:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}" else "$m:${s.toString().padStart(2,'0')}"}
 private fun agoCompact(ms:Long)="${durationCompact(ms)} назад"
 private fun clock(ms:Long)=java.text.SimpleDateFormat("HH:mm",java.util.Locale.getDefault()).format(java.util.Date(ms))
 private fun withTime(epoch:Long,hour:Int,minute:Int)=java.util.Calendar.getInstance().apply{timeInMillis=epoch;set(java.util.Calendar.HOUR_OF_DAY,hour);set(java.util.Calendar.MINUTE,minute);set(java.util.Calendar.SECOND,0);set(java.util.Calendar.MILLISECOND,0)}.timeInMillis
 private fun feedName(s:String)=when(s){"LEFT"->"L";"RIGHT"->"R";else->"бутылочка"}
+private fun lastBreastfeedingSummary(events:List<BabyEvent>):String?=events.firstOrNull{it.type==EventType.FEEDING&&(it.detail==FeedingKind.LEFT.name||it.detail==FeedingKind.RIGHT.name)}?.let{last->val next=if(last.detail==FeedingKind.LEFT.name)"R" else "L";"Последняя грудь · ${feedName(last.detail)}  →  следующая · $next"}
 private fun eventTitle(e:BabyEvent)=when(e.type){EventType.SLEEP->"Сон";EventType.FEEDING->"Кормление · ${feedName(e.detail)}";EventType.PUMPING->{val (side,volume)=e.detail.split(":",limit=2).let{it.firstOrNull().orEmpty() to it.getOrNull(1).orEmpty()};"Сцеживание · ${if(side=="LEFT")"левая" else "правая"} · $volume мл"}}
 private fun posName(p:SleepPosition)=when(p){SleepPosition.LEFT->"Голова слева";SleepPosition.RIGHT->"Голова справа";SleepPosition.BACK, SleepPosition.OTHER->"Другое"}
 private fun shortPos(p:SleepPosition)=when(p){SleepPosition.LEFT->"Лево";SleepPosition.RIGHT->"Право";SleepPosition.BACK, SleepPosition.OTHER->"Другое"}

@@ -1,6 +1,7 @@
 package com.mark.babylog.widget
 
 import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import android.widget.RemoteViews
 import androidx.compose.runtime.Composable
@@ -26,8 +27,8 @@ data class WidgetButton(val label:String,val command:String,val imageRes:Int?=nu
 data class WidgetUi(val title:String,val status:String,val timerStartedAt:Long?=null,val buttons:List<WidgetButton>)
 
 fun feedingWidgetUi(active:BabyEvent?,last:BabyEvent?,now:Long):WidgetUi {
-    val running=active?.takeIf{it.type==EventType.FEEDING}
-    val buttons=listOf(FeedingKind.LEFT to "L",FeedingKind.RIGHT to "R",FeedingKind.BOTTLE to "Бутылочка").map{(kind,label)->WidgetButton(if(running?.detail==kind.name)"■ Стоп" else label,if(running?.detail==kind.name)"STOP" else kind.name)}
+    val running=active?.takeIf{it.type==EventType.FEEDING&&feedingKindOf(it.detail)!=FeedingKind.BOTTLE}
+    val buttons=listOf(FeedingKind.LEFT to "L",FeedingKind.RIGHT to "R",FeedingKind.BOTTLE to "Бутылочка").map{(kind,label)->val isRunning=kind!=FeedingKind.BOTTLE&&running?.detail==kind.name;WidgetButton(if(isRunning)"■ Стоп" else label,if(isRunning)"STOP" else kind.name)}
     return WidgetUi("Кормление",when{running!=null->"Идёт · ${feedLabel(running.detail)}";last!=null->"${feedLabel(last.detail)} · ${elapsed(now-(last.endedAt?:last.startedAt))} назад";else->"Записей пока нет"},running?.startedAt,buttons)
 }
 
@@ -40,7 +41,7 @@ private val kindKey=ActionParameters.Key<String>("kind")
 private val surfaceKey=ActionParameters.Key<String>("surface")
 private fun dao(context:Context)=(context.applicationContext as BabyLogApp).database.events()
 
-class FeedAction:ActionCallback { override suspend fun onAction(context:Context,glanceId:GlanceId,parameters:ActionParameters){val app=context.applicationContext as BabyLogApp;val command=parameters[kindKey]?:"BOTTLE";if(command=="STOP")app.repository.stop() else app.repository.startFeeding(FeedingKind.valueOf(command));app.familySync.schedule();val widget=when(parameters[surfaceKey]){"horizontal"->FeedingHorizontalWidget();"mini"->FeedingMiniWidget();else->FeedingWidget()};AppSurfaceSync.refreshFromWidget(context,glanceId,widget)} }
+class FeedAction:ActionCallback { override suspend fun onAction(context:Context,glanceId:GlanceId,parameters:ActionParameters){val command=parameters[kindKey]?:"BOTTLE";if(command=="BOTTLE"){context.startActivity(MainActivity.bottleIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP));return};val app=context.applicationContext as BabyLogApp;if(command=="STOP")app.repository.stop() else app.repository.startFeeding(FeedingKind.valueOf(command));app.familySync.schedule();val widget=when(parameters[surfaceKey]){"horizontal"->FeedingHorizontalWidget();"mini"->FeedingMiniWidget();else->FeedingWidget()};AppSurfaceSync.refreshFromWidget(context,glanceId,widget)} }
 class SleepAction:ActionCallback { override suspend fun onAction(context:Context,glanceId:GlanceId,parameters:ActionParameters){val app=context.applicationContext as BabyLogApp;val command=parameters[kindKey]?:"LEFT";app.repository.startSleep(SleepPosition.valueOf(command));app.familySync.schedule();AppSurfaceSync.refreshFromWidget(context,glanceId,SleepWidget())} }
 
 class FeedingWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val now=System.currentTimeMillis();val ui=feedingWidgetUi(d.active(),d.lastFeed(),now);provideContent{StandardWidgetBox(context,ui,now,FeedAction::class.java,"feeding")}}}
@@ -49,7 +50,7 @@ class SleepWidget:GlanceAppWidget(){override suspend fun provideGlance(context:C
 class SleepWidgetReceiver:GlanceAppWidgetReceiver(){override val glanceAppWidget=SleepWidget()}
 class FeedingHorizontalWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val now=System.currentTimeMillis();val ui=feedingWidgetUi(d.active(),d.lastFeed(),now);provideContent{HorizontalWidgetBox(context,ui,now,FeedAction::class.java)}}}
 class FeedingHorizontalWidgetReceiver:GlanceAppWidgetReceiver(){override val glanceAppWidget=FeedingHorizontalWidget()}
-class FeedingMiniWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val active=d.active()?.takeIf{it.type==EventType.FEEDING};val buttons=listOf("LEFT" to "L","RIGHT" to "R","BOTTLE" to "🍼").map{(command,label)->WidgetButton(if(active?.detail==command)"■" else label,if(active?.detail==command)"STOP" else command)};provideContent{MiniWidgetBox(buttons,FeedAction::class.java)}}}
+class FeedingMiniWidget:GlanceAppWidget(){override suspend fun provideGlance(context:Context,id:GlanceId){val d=dao(context);val active=d.active()?.takeIf{it.type==EventType.FEEDING&&feedingKindOf(it.detail)!=FeedingKind.BOTTLE};val buttons=listOf("LEFT" to "L","RIGHT" to "R","BOTTLE" to "🍼").map{(command,label)->val isRunning=command!="BOTTLE"&&active?.detail==command;WidgetButton(if(isRunning)"■" else label,if(isRunning)"STOP" else command)};provideContent{MiniWidgetBox(buttons,FeedAction::class.java)}}}
 class FeedingMiniWidgetReceiver:GlanceAppWidgetReceiver(){override val glanceAppWidget=FeedingMiniWidget()}
 
 @OptIn(ExperimentalGlanceRemoteViewsApi::class)

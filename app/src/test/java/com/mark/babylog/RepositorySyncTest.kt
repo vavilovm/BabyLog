@@ -40,13 +40,14 @@ class RepositorySyncTest{
         assertEquals("LOG_SLEEP",db.events().pending().single().command)
     }
 
-    @Test fun bottleVolumeIsSavedWhenFeedingStops()=runTest{
+    @Test fun bottleVolumeIsLoggedAsInstantCompletedFeeding()=runTest{
         db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
-        repository.startFeeding(FeedingKind.BOTTLE,1_000)
-        repository.stopBottle(120,61_000)
+        repository.logBottle(120,61_000)
         val event=db.events().allForTest().single()
         assertEquals("BOTTLE:120",event.detail)
+        assertEquals(61_000L,event.startedAt)
         assertEquals(61_000L,event.endedAt)
-        assertEquals("STOP",db.events().pending().last().command)
+        assertNull(db.events().active())
+        assertEquals("LOG_BOTTLE",db.events().pending().single().command)
     }
 }

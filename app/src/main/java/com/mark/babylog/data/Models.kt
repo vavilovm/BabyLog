@@ -93,6 +93,11 @@ interface EventDao {
         val value=BabyEvent(type=EventType.PUMPING,detail="${side.name}:$volumeMl",startedAt=time,endedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
         return value.copy(id=insert(value))
     }
+    @Transaction suspend fun logBottle(volumeMl:Int,time:Long,owner:FamilyMembership?=null):BabyEvent {
+        require(volumeMl>0)
+        val value=BabyEvent(type=EventType.FEEDING,detail="BOTTLE:$volumeMl",startedAt=time,endedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+        return value.copy(id=insert(value))
+    }
     @Transaction suspend fun stopActive(time:Long):BabyEvent? {val current=active()?:return null;finish(current.id,time);return current.copy(endedAt=time,updatedAt=time)}
 }
 

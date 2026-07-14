@@ -1,6 +1,8 @@
 package com.mark.babylog
 
 import android.os.Bundle
+import android.content.Intent
+import android.content.Context
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -45,7 +47,11 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState);val invite=intent?.data?.takeIf{it.scheme=="babylog"&&it.host=="join"}?.getQueryParameter("code");enableEdgeToEdge(); setContent { BabyTheme { NotificationPermission();val vm:MainViewModel=viewModel(); BabyScreen(vm.state.collectAsStateWithLifecycle().value, vm,initialInvite=invite) } } }
+    private var bottleRequest by mutableIntStateOf(0)
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState);val invite=intent?.data?.takeIf{it.scheme=="babylog"&&it.host=="join"}?.getQueryParameter("code");acceptBottleRequest(intent);enableEdgeToEdge(); setContent { BabyTheme { NotificationPermission();val vm:MainViewModel=viewModel(); BabyScreen(vm.state.collectAsStateWithLifecycle().value, vm,initialInvite=invite,bottleRequestKey=bottleRequest) } } }
+    override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);acceptBottleRequest(intent)}
+    private fun acceptBottleRequest(intent:Intent?){if(intent?.getBooleanExtra(EXTRA_OPEN_BOTTLE,false)==true){intent.removeExtra(EXTRA_OPEN_BOTTLE);bottleRequest++}}
+    companion object {const val EXTRA_OPEN_BOTTLE="com.mark.babylog.OPEN_BOTTLE";fun bottleIntent(context:Context)=Intent(context,MainActivity::class.java).putExtra(EXTRA_OPEN_BOTTLE,true)}
 }
 
 @Composable private fun NotificationPermission(){val context=LocalContext.current;val scope=rememberCoroutineScope();val launcher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)scope.launch{AppSurfaceSync.refresh(context)}};LaunchedEffect(Unit){if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)launcher.launch(Manifest.permission.POST_NOTIFICATIONS)}}
@@ -55,7 +61,7 @@ internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0
 @Composable fun BabyTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme=if(isSystemInDarkTheme()) Dark else Light, typography=Typography(), content=content)
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun BabyScreen(state: UiState, vm: MainViewModel? = null, fixedNow: Long? = null,initialInvite:String?=null,initialPumpingOnly:Boolean=false) {
+@Composable fun BabyScreen(state: UiState, vm: MainViewModel? = null, fixedNow: Long? = null,initialInvite:String?=null,initialPumpingOnly:Boolean=false,bottleRequestKey:Int=0) {
     val context=LocalContext.current
     var now by remember { mutableLongStateOf(fixedNow ?: System.currentTimeMillis()) }
     LaunchedEffect(fixedNow) { if(fixedNow==null) while(true){ now=System.currentTimeMillis(); delay(1000) } }
@@ -65,6 +71,7 @@ internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0
     var pumpingOpen by remember { mutableStateOf(false) }
     var bottleVolumeOpen by remember { mutableStateOf(false) }
     var pumpingOnly by remember { mutableStateOf(initialPumpingOnly) }
+    LaunchedEffect(bottleRequestKey){if(bottleRequestKey>0)bottleVolumeOpen=true}
     val membership=vm?.membership?.collectAsStateWithLifecycle()?.value
     val pending=vm?.pendingCount?.collectAsStateWithLifecycle()?.value?:0
     val syncStatus=vm?.syncStatus?.collectAsStateWithLifecycle()?.value
@@ -74,7 +81,7 @@ internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0
     Scaffold(topBar={ TopAppBar(title={Text("BabyLog",fontWeight=FontWeight.Bold)},actions={if(syncStatus?.error!=null)Text("!",color=MaterialTheme.colorScheme.error,fontWeight=FontWeight.Bold) else if(pending>0)Text("↻ $pending",color=MaterialTheme.colorScheme.primary);IconButton(onClick={familyOpen=true}){Icon(if(membership==null)Icons.Default.GroupAdd else Icons.Default.Group,"Семья")};IconButton(onClick={vm?.shareCsv(context)}){Icon(Icons.Default.FileDownload,"Экспорт CSV")}}) }) { pad ->
         LazyColumn(Modifier.fillMaxSize().padding(pad),contentPadding=PaddingValues(16.dp,8.dp,16.dp,32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             item { StatusCard(active,state.events,now,vm,onStop={if(active?.let{feedingKindOf(it.detail)}==FeedingKind.BOTTLE)bottleVolumeOpen=true else vm?.stop()}){statsOpen=true} }
-            item { QuickActions(active,vm,onPumping={pumpingOpen=true},onBottleStop={bottleVolumeOpen=true}) }
+            item { QuickActions(active,vm,onPumping={pumpingOpen=true},onBottle={bottleVolumeOpen=true}) }
             item { HistoryHeader(pumpingOnly){pumpingOnly=!pumpingOnly} }
             if(recent.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp),contentAlignment=Alignment.Center){Text(if(pumpingOnly)"Сцеживаний пока нет" else "Событий пока нет",color=MaterialTheme.colorScheme.onSurfaceVariant)} }
             items(recent,key={it.id}) { EventRow(it,now){edit=it} }
@@ -82,7 +89,7 @@ internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0
     }
     edit?.let { original -> EditDialog(original,onDismiss={edit=null},onSave={vm?.updateEvent(it);edit=null},onDelete={vm?.delete(original);edit=null}) }
     if(pumpingOpen)PumpingDialog(defaultPumpingSide(state.events),onDismiss={pumpingOpen=false}) { side, volume -> vm?.logPumping(side,volume);pumpingOpen=false }
-    if(bottleVolumeOpen)BottleVolumeDialog(onDismiss={bottleVolumeOpen=false},onSave={volume->vm?.stopBottle(volume);bottleVolumeOpen=false},onWithoutVolume={vm?.stop();bottleVolumeOpen=false})
+    if(bottleVolumeOpen)BottleVolumeDialog(onDismiss={bottleVolumeOpen=false},onSave={volume->if(active?.let{feedingKindOf(it.detail)}==FeedingKind.BOTTLE)vm?.stopBottle(volume) else vm?.logBottle(volume);bottleVolumeOpen=false})
     if(familyOpen&&vm!=null)FamilyDialog(membership,vm,initialInvite.orEmpty()){familyOpen=false}
     if(statsOpen)AlertDialog(onDismissRequest={statsOpen=false},title={Text("Последние 100 действий")},text={Stats(allRecent,state.segments,now,false)},confirmButton={TextButton(onClick={statsOpen=false}){Text("Готово")}})
 }
@@ -91,13 +98,13 @@ internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0
 
 @Composable private fun QrCode(value:String){val bitmap=remember(value){val matrix=com.google.zxing.MultiFormatWriter().encode("babylog://join?code=$value",com.google.zxing.BarcodeFormat.QR_CODE,420,420);android.graphics.Bitmap.createBitmap(420,420,android.graphics.Bitmap.Config.RGB_565).apply{for(y in 0 until 420)for(x in 0 until 420)setPixel(x,y,if(matrix[x,y])android.graphics.Color.BLACK else android.graphics.Color.WHITE)}};Image(bitmap.asImageBitmap(),"QR-код приглашения",Modifier.size(180.dp))}
 
-@Composable private fun QuickActions(active:BabyEvent?,vm:MainViewModel?,onPumping:()->Unit,onBottleStop:()->Unit){
+@Composable private fun QuickActions(active:BabyEvent?,vm:MainViewModel?,onPumping:()->Unit,onBottle:()->Unit){
     Surface(shape=RoundedCornerShape(20.dp),tonalElevation=3.dp){Column(Modifier.padding(12.dp,10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Text("Быстрые действия",fontWeight=FontWeight.Bold)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
             ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="LEFT")"Стоп" else "L",if(active?.type==EventType.FEEDING&&active.detail=="LEFT")Icons.Default.Stop else null,Modifier.weight(1f),active?.type==EventType.FEEDING&&active.detail=="LEFT"){if(active?.type==EventType.FEEDING&&active.detail=="LEFT")vm?.stop() else vm?.startFeeding(FeedingKind.LEFT)}
             ActionButton(if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")"Стоп" else "R",if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")Icons.Default.Stop else null,Modifier.weight(1f),active?.type==EventType.FEEDING&&active.detail=="RIGHT"){if(active?.type==EventType.FEEDING&&active.detail=="RIGHT")vm?.stop() else vm?.startFeeding(FeedingKind.RIGHT)}
-            ActionButton(if(active?.type==EventType.FEEDING&&feedingKindOf(active.detail)==FeedingKind.BOTTLE)"Стоп" else "Бутылочка",if(active?.type==EventType.FEEDING&&feedingKindOf(active.detail)==FeedingKind.BOTTLE)Icons.Default.Stop else Icons.Default.LocalDrink,Modifier.weight(1f),active?.type==EventType.FEEDING&&feedingKindOf(active.detail)==FeedingKind.BOTTLE){if(active?.type==EventType.FEEDING&&feedingKindOf(active.detail)==FeedingKind.BOTTLE)onBottleStop() else vm?.startFeeding(FeedingKind.BOTTLE)}
+            ActionButton("Бутылочка",Icons.Default.LocalDrink,Modifier.weight(1f),false,onBottle)
         }
         OutlinedButton(onClick=onPumping,modifier=Modifier.fillMaxWidth().height(48.dp)) { Icon(Icons.Default.WaterDrop,null);Spacer(Modifier.width(8.dp));Text("Сцеживание") }
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -125,12 +132,12 @@ internal fun historyEvents(events:List<BabyEvent>,pumpingOnly:Boolean)=events.as
     }},confirmButton={TextButton(onClick={onSave(side,volume.toInt())},enabled=volume.toIntOrNull()?.let{it>0}==true){Text("Сохранить")}},dismissButton={TextButton(onClick=onDismiss){Text("Отмена")}})
 }
 
-@Composable internal fun BottleVolumeDialog(onDismiss:()->Unit,onSave:(Int)->Unit,onWithoutVolume:()->Unit){
+@Composable internal fun BottleVolumeDialog(onDismiss:()->Unit,onSave:(Int)->Unit){
     var volume by remember { mutableStateOf("") }
     val focusRequester=remember { FocusRequester() }
     val keyboard=LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit){focusRequester.requestFocus();keyboard?.show()}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("Кормление из бутылочки")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){Text("Сколько ребёнок выпил?");OutlinedTextField(volume,{volume=it.filter(Char::isDigit)},label={Text("Объём, мл")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth().focusRequester(focusRequester))}},confirmButton={TextButton(onClick={onSave(volume.toInt())},enabled=volume.toIntOrNull()?.let{it>0}==true){Text("Сохранить")}},dismissButton={Row{TextButton(onClick=onWithoutVolume){Text("Без объёма")};TextButton(onClick=onDismiss){Text("Отмена")}}})
+    AlertDialog(onDismissRequest=onDismiss,title={Text("Кормление из бутылочки")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){Text("Сколько ребёнок выпил? Время кормления будет записано как сейчас.");OutlinedTextField(volume,{volume=it.filter(Char::isDigit)},label={Text("Объём, мл")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth().focusRequester(focusRequester))}},confirmButton={TextButton(onClick={onSave(volume.toInt())},enabled=volume.toIntOrNull()?.let{it>0}==true){Text("Сохранить")}},dismissButton={TextButton(onClick=onDismiss){Text("Отмена")}})
 }
 
 internal fun defaultPumpingSide(events:List<BabyEvent>):FeedingKind=when(events.firstOrNull{it.type==EventType.FEEDING}?.detail){

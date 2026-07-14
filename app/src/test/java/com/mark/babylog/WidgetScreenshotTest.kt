@@ -25,6 +25,7 @@ class WidgetScreenshotTest {
     @Test fun feedingCompact_selection()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(null,null,NOW),null)}}
     @Test fun feedingCompact_activeLeft()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"LEFT",NOW-42_000),null,NOW),"00:42")}}
     @Test fun feedingCompact_finishedUsesEndTime(){val ui=feedingWidgetUi(null,BabyEvent(1,EventType.FEEDING,"RIGHT",NOW-120_000,NOW-30_000),NOW);org.junit.Assert.assertTrue(ui.status.contains("0:30 назад"))}
+    @Test fun bottleNeverStartsWidgetTimer(){val ui=feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"BOTTLE",NOW-42_000),null,NOW);org.junit.Assert.assertNull(ui.timerStartedAt);org.junit.Assert.assertEquals("BOTTLE",ui.buttons.last().command)}
     @Test fun sleepCompact_onlyLeftRight()=paparazzi.snapshot{BabyTheme{StandardPreview(sleepWidgetUi(null,NOW),null)}}
 }
 

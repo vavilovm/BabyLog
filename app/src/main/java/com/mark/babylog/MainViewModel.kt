@@ -32,6 +32,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun startFeeding(kind: FeedingKind) = viewModelScope.launch { repository.startFeeding(kind);sync() }
     fun startSleep(position: SleepPosition) = viewModelScope.launch { repository.startSleep(position);sync() }
     fun logPumping(side: FeedingKind, volumeMl: Int) = viewModelScope.launch { repository.logPumping(side,volumeMl);sync() }
+    fun logBottle(volumeMl: Int) = viewModelScope.launch { repository.logBottle(volumeMl);sync() }
     fun changePosition(position: SleepPosition) = viewModelScope.launch { repository.changePosition(position);sync() }
     fun stop() = viewModelScope.launch { repository.stop();sync() }
     fun stopBottle(volumeMl: Int) = viewModelScope.launch { repository.stopBottle(volumeMl);sync() }

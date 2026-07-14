@@ -145,7 +145,7 @@ object AppSurfaceSync {
         return if(active.type==EventType.FEEDING)listOf(
             item("LEFT","L","FEED_LEFT",11),
             item("RIGHT","R","FEED_RIGHT",12),
-            item("BOTTLE","🍼","FEED_BOTTLE",13)
+            CompactAction("🍼","FEED_BOTTLE",13)
         )else listOf(
             item("LEFT","Лево","SLEEP_LEFT",14),
             item("RIGHT","Право","SLEEP_RIGHT",15)
@@ -175,12 +175,12 @@ object AppSurfaceSync {
         }
     }
 
-    private fun action(context:Context,command:String,request:Int)=PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    private fun action(context:Context,command:String,request:Int)=if(command=="FEED_BOTTLE")PendingIntent.getActivity(context,request,MainActivity.bottleIntent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)else PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     private fun feedName(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"бутылочка"}
     private fun feedIcon(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"🍼"}
     private fun sleepName(v:String)=when(v){"LEFT"->"голова слева";"RIGHT"->"голова справа";else->"другое"}
 }
 
-class TimerActionReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{val app=context.applicationContext as BabyLogApp;when(intent.getStringExtra("command")){"STOP"->app.repository.stop();"FEED_LEFT"->app.repository.startFeeding(FeedingKind.LEFT);"FEED_RIGHT"->app.repository.startFeeding(FeedingKind.RIGHT);"FEED_BOTTLE"->app.repository.startFeeding(FeedingKind.BOTTLE);"SLEEP_LEFT"->app.repository.startSleep(SleepPosition.LEFT);"SLEEP_RIGHT"->app.repository.startSleep(SleepPosition.RIGHT)};app.familySync.schedule();AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}
+class TimerActionReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{val app=context.applicationContext as BabyLogApp;when(intent.getStringExtra("command")){"STOP"->app.repository.stop();"FEED_LEFT"->app.repository.startFeeding(FeedingKind.LEFT);"FEED_RIGHT"->app.repository.startFeeding(FeedingKind.RIGHT);"SLEEP_LEFT"->app.repository.startSleep(SleepPosition.LEFT);"SLEEP_RIGHT"->app.repository.startSleep(SleepPosition.RIGHT)};app.familySync.schedule();AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}
 
 class BootReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){if(intent.action==Intent.ACTION_BOOT_COMPLETED){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}}

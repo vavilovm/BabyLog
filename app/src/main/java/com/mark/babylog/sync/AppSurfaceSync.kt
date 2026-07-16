@@ -35,7 +35,9 @@ import kotlinx.coroutines.sync.withLock
 
 object AppSurfaceSync {
     private const val ACTIVE_TIMER_CHANNEL="active_timers_visible"
-    private const val FEEDING_START_CHANNEL="feeding_starts_low"
+    // A new channel id promotes the persistent quick-start notification out of the
+    // easily hidden "silent/minimized" bucket for existing installs as well.
+    private const val FEEDING_START_CHANNEL="feeding_starts_visible"
     private const val LEGACY_NOTIFICATION_ID=42
     private const val NOTIFICATION_ID=43
     private const val FEEDING_START_NOTIFICATION_ID=44
@@ -107,12 +109,12 @@ object AppSurfaceSync {
     }
 
     private fun showFeedingStartNotification(context:Context,manager:NotificationManagerCompat,lastFeed:BabyEvent?){
-        if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(FEEDING_START_CHANNEL,"Быстрый старт кормления",NotificationManager.IMPORTANCE_LOW).apply{description="Быстрый старт кормления с экрана блокировки";setSound(null,null);enableVibration(false);setShowBadge(false);lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
+        if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(FEEDING_START_CHANNEL,"Быстрый старт кормления",NotificationManager.IMPORTANCE_DEFAULT).apply{description="Быстрый старт кормления с экрана блокировки";setSound(null,null);enableVibration(false);setShowBadge(false);lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
         val open=PendingIntent.getActivity(context,2,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val actions=feedingStartActions()
         val summary=lastFeedSummary(lastFeed)
         val compact=feedingStartCompactNotification(context,actions,lastFeed)
-        val builder=NotificationCompat.Builder(context,FEEDING_START_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle("Начать кормление").setContentText(summary?:"Выберите способ кормления").setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STATUS).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
+        val builder=NotificationCompat.Builder(context,FEEDING_START_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle("Начать кормление").setContentText(summary?:"Выберите способ кормления").setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_DEFAULT).setCategory(NotificationCompat.CATEGORY_STATUS).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
         actions.forEach{builder.addAction(0,it.label,action(context,it.command,it.request))}
         manager.notify(FEEDING_START_NOTIFICATION_ID,builder.build())
     }
@@ -122,8 +124,11 @@ object AppSurfaceSync {
     private fun compactNotification(context:Context,active:BabyEvent)=RemoteViews(context.packageName,R.layout.notification_timer_compact).apply{
         val elapsed=System.currentTimeMillis()-active.startedAt
         setChronometer(R.id.notification_chronometer,SystemClock.elapsedRealtime()-elapsed,null,true)
-        setString(R.id.notification_chronometer,"setFormat",if(active.type==EventType.FEEDING)"🍼 %s" else "🌙 %s")
-        val actions=notificationActions(active)
+        setString(R.id.notification_chronometer,"setFormat",if(active.type==EventType.FEEDING)"%s" else "🌙 %s")
+        applyCompactActions(context,notificationActions(active))
+    }
+
+    private fun RemoteViews.applyCompactActions(context:Context,actions:List<CompactAction>){
         listOf(R.id.notification_action_1,R.id.notification_action_2,R.id.notification_action_3).forEachIndexed{index,id->
             val item=actions.getOrNull(index)
             setViewVisibility(id,if(item==null)View.GONE else View.VISIBLE)
@@ -132,20 +137,21 @@ object AppSurfaceSync {
     }
 
     private fun feedingStartCompactNotification(context:Context,actions:List<CompactAction>,lastFeed:BabyEvent?)=RemoteViews(context.packageName,R.layout.notification_timer_compact).apply{
-        setTextViewText(R.id.notification_chronometer,lastFeedCompactSummary(lastFeed)?:"🍼 Начать")
-        actions.forEachIndexed{index,item->
-            val id=listOf(R.id.notification_action_1,R.id.notification_action_2,R.id.notification_action_3)[index]
-            setTextViewText(id,item.label)
-            setOnClickPendingIntent(id,action(context,item.command,item.request))
+        if(lastFeed==null){
+            setTextViewText(R.id.notification_chronometer,"Начать кормление")
+        }else{
+            val elapsed=(System.currentTimeMillis()-(lastFeed.endedAt?:lastFeed.startedAt)).coerceAtLeast(0)
+            setChronometer(R.id.notification_chronometer,SystemClock.elapsedRealtime()-elapsed,null,true)
+            setString(R.id.notification_chronometer,"setFormat","${lastFeedCompactLabel(lastFeed)} · %s")
         }
+        applyCompactActions(context,actions)
     }
 
     private fun notificationActions(active:BabyEvent):List<CompactAction>{
         fun item(detail:String,label:String,command:String,request:Int)=CompactAction(if(active.detail==detail)"Стоп" else label,if(active.detail==detail)"STOP" else command,request)
         return if(active.type==EventType.FEEDING)listOf(
             item("LEFT","L","FEED_LEFT",11),
-            item("RIGHT","R","FEED_RIGHT",12),
-            CompactAction("🍼","FEED_BOTTLE",13)
+            item("RIGHT","R","FEED_RIGHT",12)
         )else listOf(
             item("LEFT","Лево","SLEEP_LEFT",14),
             item("RIGHT","Право","SLEEP_RIGHT",15)
@@ -154,16 +160,17 @@ object AppSurfaceSync {
 
     private fun feedingStartActions()=listOf(
         CompactAction("L","FEED_LEFT",21),
-        CompactAction("R","FEED_RIGHT",22),
-        CompactAction("🍼","FEED_BOTTLE",23)
+        CompactAction("R","FEED_RIGHT",22)
     )
 
     private fun lastFeedSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
-        "${feedIcon(it.detail)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))} назад"
+        "${lastFeedCompactLabel(it)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))} назад"
     }
 
-    private fun lastFeedCompactSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
-        "${feedIcon(it.detail)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))}"
+    private fun lastFeedCompactLabel(lastFeed:BabyEvent)=when(feedingKindOf(lastFeed.detail)){
+        FeedingKind.LEFT->"L"
+        FeedingKind.RIGHT->"R"
+        FeedingKind.BOTTLE->bottleVolumeMl(lastFeed.detail)?.let{"$it мл"}?:"Бут."
     }
 
     private fun formatElapsed(elapsed:Long):String{
@@ -177,7 +184,6 @@ object AppSurfaceSync {
 
     private fun action(context:Context,command:String,request:Int)=if(command=="FEED_BOTTLE")PendingIntent.getActivity(context,request,MainActivity.bottleIntent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)else PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     private fun feedName(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"бутылочка"}
-    private fun feedIcon(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"🍼"}
     private fun sleepName(v:String)=when(v){"LEFT"->"голова слева";"RIGHT"->"голова справа";else->"другое"}
 }
 

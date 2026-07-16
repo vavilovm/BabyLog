@@ -2,7 +2,6 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="48dp"
-    android:background="#211F26"
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingStart="4dp"
@@ -13,14 +12,17 @@
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
+        android:ellipsize="end"
         android:gravity="center_vertical"
-        android:textColor="#F5EFF7"
+        android:maxLines="1"
+        android:singleLine="true"
+        android:textColor="@color/notification_text"
         android:textSize="15sp"
         android:textStyle="bold" />
 
     <TextView
         android:id="@+id/notification_action_1"
-        android:layout_width="58dp"
+        android:layout_width="60dp"
         android:layout_height="36dp"
         android:layout_marginStart="4dp"
         android:background="@drawable/notification_action"
@@ -31,7 +33,7 @@
 
     <TextView
         android:id="@+id/notification_action_2"
-        android:layout_width="64dp"
+        android:layout_width="60dp"
         android:layout_height="36dp"
         android:layout_marginStart="4dp"
         android:background="@drawable/notification_action"
@@ -42,7 +44,7 @@
 
     <TextView
         android:id="@+id/notification_action_3"
-        android:layout_width="72dp"
+        android:layout_width="60dp"
         android:layout_height="36dp"
         android:layout_marginStart="4dp"
         android:background="@drawable/notification_action"

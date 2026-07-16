@@ -10,19 +10,26 @@ import com.mark.babylog.data.*
 import com.mark.babylog.sync.AppSurfaceSync
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.*
 
-data class UiState(val events: List<BabyEvent> = emptyList(), val segments: List<SleepSegment> = emptyList()) {
+data class UiState(val events: List<BabyEvent> = emptyList(), val segments: List<SleepSegment> = emptyList(),val totalEvents:Int=events.size) {
     val active get() = events.firstOrNull { it.type == EventType.FEEDING && it.endedAt == null }
 }
+data class ReminderUiState(val reminders:List<BabyReminder> = emptyList(),val completions:List<ReminderCompletion> = emptyList())
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val babyApp=app as BabyLogApp
     private val dao = babyApp.database.events()
     private val repository=babyApp.repository
-    val state = combine(dao.observeAll(), dao.observeSegments()) { e, s -> UiState(e, s) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
+    private val historyLimit=MutableStateFlow(100)
+    val state = combine(historyLimit.flatMapLatest(dao::observeRecent),dao.observeVisibleCount()) { e, total -> UiState(e,totalEvents=total) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
+    val reminderState=combine(babyApp.reminderRepository.reminders,babyApp.reminderRepository.completions,::ReminderUiState).stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),ReminderUiState())
     init { viewModelScope.launch { sync() } }
 
     val membership=repository.membership.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),null)
@@ -38,16 +45,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopBottle(volumeMl: Int) = viewModelScope.launch { repository.stopBottle(volumeMl);sync() }
     fun updateEvent(event: BabyEvent) = viewModelScope.launch { repository.updateEvent(event);sync() }
     fun delete(event: BabyEvent) = viewModelScope.launch { repository.deleteEvent(event);sync() }
+    fun loadMoreHistory(){historyLimit.update{current->minOf(current+100,maxOf(current,state.value.totalEvents))}}
+    fun saveReminder(reminder:BabyReminder)=viewModelScope.launch{babyApp.reminderRepository.save(reminder)}
+    fun deleteReminder(reminder:BabyReminder)=viewModelScope.launch{babyApp.reminderRepository.delete(reminder)}
+    fun setReminderEnabled(reminder:BabyReminder,enabled:Boolean)=viewModelScope.launch{babyApp.reminderRepository.setEnabled(reminder,enabled)}
+    fun completeReminder(reminder:BabyReminder,day:Long=LocalDate.now().toEpochDay())=viewModelScope.launch{babyApp.reminderRepository.complete(reminder.id,day)}
+    fun undoReminder(reminder:BabyReminder,day:Long=LocalDate.now().toEpochDay())=viewModelScope.launch{babyApp.reminderRepository.undo(reminder.id,day)}
     fun createFamily(name:String,onDone:(Result<String>)->Unit)=viewModelScope.launch{onDone(runCatching{babyApp.familySync.createFamily(name)})}
     fun joinFamily(code:String,name:String,onDone:(Result<Unit>)->Unit)=viewModelScope.launch{onDone(runCatching{babyApp.familySync.joinFamily(code,name)})}
     fun createInvite(onDone:(Result<String>)->Unit)=viewModelScope.launch{onDone(runCatching{babyApp.familySync.createInvite()})}
     fun retrySync()=viewModelScope.launch{babyApp.familySync.sync()}
     private suspend fun sync(){AppSurfaceSync.refresh(getApplication());babyApp.familySync.schedule()}
-    fun csv(): File {
+    private suspend fun csv(): File {
         val f=File(getApplication<Application>().cacheDir,"babylog.csv")
-        f.writeText(buildString { appendLine("type,detail,start,end,duration_minutes"); state.value.events.reversed().forEach { e -> appendLine("${e.type},${e.detail},${iso(e.startedAt)},${e.endedAt?.let(::iso).orEmpty()},${((e.endedAt?:System.currentTimeMillis())-e.startedAt)/60000}") } })
+        val events=dao.allForExport()
+        f.writeText(buildString { appendLine("type,detail,start,end,duration_minutes"); events.forEach { e -> appendLine("${e.type},${e.detail},${iso(e.startedAt)},${e.endedAt?.let(::iso).orEmpty()},${((e.endedAt?:System.currentTimeMillis())-e.startedAt)/60000}") } })
         return f
     }
-    fun shareCsv(context: Context) { val uri=FileProvider.getUriForFile(context,"${context.packageName}.files",csv());context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/csv";putExtra(Intent.EXTRA_STREAM,uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)},"Экспорт истории")) }
+    fun shareCsv(context: Context)=viewModelScope.launch { val file=withContext(Dispatchers.IO){csv()};val uri=FileProvider.getUriForFile(context,"${context.packageName}.files",file);context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/csv";putExtra(Intent.EXTRA_STREAM,uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)},"Экспорт истории")) }
     private fun iso(t:Long)=SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US).format(Date(t))
 }

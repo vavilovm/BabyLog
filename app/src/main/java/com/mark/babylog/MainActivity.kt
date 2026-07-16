@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,15 +37,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mark.babylog.data.*
 import com.mark.babylog.sync.AppSurfaceSync
+import com.mark.babylog.reminders.ReminderScheduler
+import com.mark.babylog.reminders.occursOn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.concurrent.TimeUnit
+import java.time.LocalDate
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private var bottleRequest by mutableIntStateOf(0)
@@ -54,7 +59,7 @@ class MainActivity : ComponentActivity() {
     companion object {const val EXTRA_OPEN_BOTTLE="com.mark.babylog.OPEN_BOTTLE";fun bottleIntent(context:Context)=Intent(context,MainActivity::class.java).putExtra(EXTRA_OPEN_BOTTLE,true)}
 }
 
-@Composable private fun NotificationPermission(){val context=LocalContext.current;val scope=rememberCoroutineScope();val launcher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)scope.launch{AppSurfaceSync.refresh(context)}};LaunchedEffect(Unit){if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)launcher.launch(Manifest.permission.POST_NOTIFICATIONS)}}
+@Composable private fun NotificationPermission(){val context=LocalContext.current;val scope=rememberCoroutineScope();val launcher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->if(granted)scope.launch{ReminderScheduler.rescheduleAll(context);AppSurfaceSync.refresh(context)}};LaunchedEffect(Unit){if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)launcher.launch(Manifest.permission.POST_NOTIFICATIONS)}}
 
 private val Light = lightColorScheme(primary=Color(0xFF65558F), secondary=Color(0xFF7D5260), surfaceVariant=Color(0xFFE7E0EC))
 internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0xFFEFB8C8), background=Color(0xFF141218), surface=Color(0xFF211F26))
@@ -70,27 +75,36 @@ internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0
     var statsOpen by remember { mutableStateOf(false) }
     var pumpingOpen by remember { mutableStateOf(false) }
     var bottleVolumeOpen by remember { mutableStateOf(false) }
+    var remindersOpen by remember { mutableStateOf(false) }
+    var reminderEditorOpen by remember { mutableStateOf(false) }
+    var editingReminder by remember { mutableStateOf<BabyReminder?>(null) }
     var pumpingOnly by remember { mutableStateOf(initialPumpingOnly) }
     LaunchedEffect(bottleRequestKey){if(bottleRequestKey>0)bottleVolumeOpen=true}
     val membership=vm?.membership?.collectAsStateWithLifecycle()?.value
     val pending=vm?.pendingCount?.collectAsStateWithLifecycle()?.value?:0
     val syncStatus=vm?.syncStatus?.collectAsStateWithLifecycle()?.value
+    val reminderState=vm?.reminderState?.collectAsStateWithLifecycle()?.value?:ReminderUiState()
     val allRecent=state.events.take(100)
     val recent=historyEvents(state.events,pumpingOnly)
     val active=state.active
-    Scaffold(topBar={ TopAppBar(title={Text("BabyLog",fontWeight=FontWeight.Bold)},actions={if(syncStatus?.error!=null)Text("!",color=MaterialTheme.colorScheme.error,fontWeight=FontWeight.Bold) else if(pending>0)Text("↻ $pending",color=MaterialTheme.colorScheme.primary);IconButton(onClick={familyOpen=true}){Icon(if(membership==null)Icons.Default.GroupAdd else Icons.Default.Group,"Семья")};IconButton(onClick={vm?.shareCsv(context)}){Icon(Icons.Default.FileDownload,"Экспорт CSV")}}) }) { pad ->
+    val lastSleepSide=state.events.firstOrNull{it.type==EventType.SLEEP}?.detail?.let{runCatching{SleepPosition.valueOf(it)}.getOrNull()}?.takeIf{it==SleepPosition.LEFT||it==SleepPosition.RIGHT}
+    Scaffold(topBar={ TopAppBar(title={Row(verticalAlignment=Alignment.CenterVertically){Text("BabyLog",fontWeight=FontWeight.Bold);lastSleepSide?.let{Spacer(Modifier.width(8.dp));SleepSideImage(it,Modifier.size(38.dp,30.dp))}}},actions={if(syncStatus?.error!=null)Text("!",color=MaterialTheme.colorScheme.error,fontWeight=FontWeight.Bold) else if(pending>0)Text("↻ $pending",color=MaterialTheme.colorScheme.primary);IconButton(onClick={familyOpen=true}){Icon(if(membership==null)Icons.Default.GroupAdd else Icons.Default.Group,"Семья")};IconButton(onClick={vm?.shareCsv(context)}){Icon(Icons.Default.FileDownload,"Экспорт CSV")}}) }) { pad ->
         LazyColumn(Modifier.fillMaxSize().padding(pad),contentPadding=PaddingValues(16.dp,8.dp,16.dp,32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             item { StatusCard(active,state.events,now,vm,onStop={if(active?.let{feedingKindOf(it.detail)}==FeedingKind.BOTTLE)bottleVolumeOpen=true else vm?.stop()}){statsOpen=true} }
+            if(vm!=null)item { ReminderPanel(reminderState,{remindersOpen=true},{vm.completeReminder(it)},{vm.undoReminder(it)}) }
             item { QuickActions(active,vm,onPumping={pumpingOpen=true},onBottle={bottleVolumeOpen=true}) }
             item { HistoryHeader(pumpingOnly){pumpingOnly=!pumpingOnly} }
             if(recent.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp),contentAlignment=Alignment.Center){Text(if(pumpingOnly)"Сцеживаний пока нет" else "Событий пока нет",color=MaterialTheme.colorScheme.onSurfaceVariant)} }
             items(recent,key={it.id}) { EventRow(it,now){edit=it} }
+            if(vm!=null&&state.events.size<state.totalEvents)item(key="history-loader") { LaunchedEffect(state.events.size,pumpingOnly){vm.loadMoreHistory()};Box(Modifier.fillMaxWidth().padding(12.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(Modifier.size(24.dp))} }
         }
     }
     edit?.let { original -> EditDialog(original,onDismiss={edit=null},onSave={vm?.updateEvent(it);edit=null},onDelete={vm?.delete(original);edit=null}) }
     if(pumpingOpen)PumpingDialog(defaultPumpingSide(state.events),onDismiss={pumpingOpen=false}) { side, volume -> vm?.logPumping(side,volume);pumpingOpen=false }
     if(bottleVolumeOpen)BottleVolumeDialog(onDismiss={bottleVolumeOpen=false},onSave={volume->if(active?.let{feedingKindOf(it.detail)}==FeedingKind.BOTTLE)vm?.stopBottle(volume) else vm?.logBottle(volume);bottleVolumeOpen=false})
     if(familyOpen&&vm!=null)FamilyDialog(membership,vm,initialInvite.orEmpty()){familyOpen=false}
+    if(remindersOpen&&vm!=null)ReminderSettingsDialog(reminderState.reminders,onDismiss={remindersOpen=false},onAdd={editingReminder=null;remindersOpen=false;reminderEditorOpen=true},onEdit={editingReminder=it;remindersOpen=false;reminderEditorOpen=true},onToggle=vm::setReminderEnabled,onDelete=vm::deleteReminder)
+    if(reminderEditorOpen&&vm!=null)ReminderEditDialog(editingReminder,onDismiss={reminderEditorOpen=false;remindersOpen=true}){vm.saveReminder(it);reminderEditorOpen=false;remindersOpen=true}
     if(statsOpen)AlertDialog(onDismissRequest={statsOpen=false},title={Text("Последние 100 действий")},text={Stats(allRecent,state.segments,now,false)},confirmButton={TextButton(onClick={statsOpen=false}){Text("Готово")}})
 }
 
@@ -116,7 +130,56 @@ internal val Dark = darkColorScheme(primary=Color(0xFFD0BCFF), secondary=Color(0
 
 @Composable internal fun HistoryHeader(pumpingOnly:Boolean,onToggle:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Text("История",fontWeight=FontWeight.Bold,fontSize=18.sp);FilterChip(selected=pumpingOnly,onClick=onToggle,label={Text("Сцеживания")},leadingIcon=if(pumpingOnly){{Icon(Icons.Default.Check,null,Modifier.size(18.dp))}}else null)}}
 
-internal fun historyEvents(events:List<BabyEvent>,pumpingOnly:Boolean)=events.asSequence().filter{!pumpingOnly||it.type==EventType.PUMPING}.take(100).toList()
+internal fun historyEvents(events:List<BabyEvent>,pumpingOnly:Boolean)=events.filter{!pumpingOnly||it.type==EventType.PUMPING}
+
+@Composable internal fun ReminderPanel(state:ReminderUiState,onSettings:()->Unit,onComplete:(BabyReminder)->Unit,onUndo:(BabyReminder)->Unit){
+    val today=LocalDate.now().toEpochDay()
+    val completedIds=state.completions.asSequence().filter{it.scheduledEpochDay==today}.map{it.reminderId}.toSet()
+    val due=state.reminders.filter{it.enabled&&it.occursOn(LocalDate.ofEpochDay(today))}
+    val pending=due.filterNot{it.id in completedIds}
+    val done=due.filter{it.id in completedIds}
+    var doneExpanded by remember{mutableStateOf(false)}
+    Surface(shape=RoundedCornerShape(18.dp),tonalElevation=2.dp){Column(Modifier.padding(12.dp,8.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.NotificationsNone,null,Modifier.size(20.dp));Spacer(Modifier.width(8.dp));Text("Напоминания",fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));IconButton(onClick=onSettings,modifier=Modifier.size(36.dp)){Icon(Icons.Default.Settings,"Настроить напоминания",Modifier.size(20.dp))}}
+        pending.forEach{reminder->Row(Modifier.fillMaxWidth().heightIn(min=42.dp),verticalAlignment=Alignment.CenterVertically){Checkbox(false,{onComplete(reminder)});Text(reminder.title,Modifier.weight(1f),fontWeight=FontWeight.Medium,maxLines=1);Text(reminderTime(reminder),style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary)}}
+        if(pending.isEmpty()&&done.isEmpty())Text("На сегодня напоминаний нет",Modifier.padding(8.dp,4.dp),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(done.isNotEmpty()){
+            Row(Modifier.fillMaxWidth().clickable{doneExpanded=!doneExpanded}.padding(8.dp,6.dp),verticalAlignment=Alignment.CenterVertically){Icon(if(doneExpanded)Icons.Default.ExpandLess else Icons.Default.ExpandMore,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Выполнено · ${done.size}",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+            if(doneExpanded)done.forEach{reminder->Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.CheckCircle,null,Modifier.padding(12.dp).size(20.dp),tint=MaterialTheme.colorScheme.primary);Text(reminder.title,Modifier.weight(1f),textDecoration=TextDecoration.LineThrough,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1);IconButton(onClick={onUndo(reminder)}){Icon(Icons.AutoMirrored.Filled.Undo,"Отменить выполнение")}}}
+        }
+    }}
+}
+
+@Composable private fun ReminderSettingsDialog(reminders:List<BabyReminder>,onDismiss:()->Unit,onAdd:()->Unit,onEdit:(BabyReminder)->Unit,onToggle:(BabyReminder,Boolean)->Unit,onDelete:(BabyReminder)->Unit){
+    AlertDialog(onDismissRequest=onDismiss,title={Text("Напоминания")},text={LazyColumn(Modifier.fillMaxWidth().heightIn(max=430.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+        if(reminders.isEmpty())item{Text("Напоминаний нет",color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        items(reminders,key={it.id}){reminder->Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surfaceVariant){Row(Modifier.fillMaxWidth().padding(8.dp),verticalAlignment=Alignment.CenterVertically){Switch(reminder.enabled,{onToggle(reminder,it)},modifier=Modifier.padding(end=8.dp));Column(Modifier.weight(1f)){Text(reminder.title,fontWeight=FontWeight.SemiBold,maxLines=1);Text("${reminderTime(reminder)} · ${reminderFrequency(reminder.intervalDays)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};IconButton(onClick={onEdit(reminder)}){Icon(Icons.Default.Edit,"Изменить")};IconButton(onClick={onDelete(reminder)}){Icon(Icons.Default.Delete,"Удалить",tint=MaterialTheme.colorScheme.error)}}}}
+        item{OutlinedButton(onClick=onAdd,Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Spacer(Modifier.width(6.dp));Text("Добавить напоминание")}}
+    }},confirmButton={TextButton(onClick=onDismiss){Text("Готово")}})
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun ReminderEditDialog(reminder:BabyReminder?,onDismiss:()->Unit,onSave:(BabyReminder)->Unit){
+    val today=LocalDate.now().toEpochDay()
+    var title by remember(reminder?.id){mutableStateOf(reminder?.title.orEmpty())}
+    var hour by remember(reminder?.id){mutableIntStateOf(reminder?.hour?:9)}
+    var minute by remember(reminder?.id){mutableIntStateOf(reminder?.minute?:0)}
+    var interval by remember(reminder?.id){mutableStateOf((reminder?.intervalDays?:1).toString())}
+    var enabled by remember(reminder?.id){mutableStateOf(reminder?.enabled?:true)}
+    var pickingTime by remember{mutableStateOf(false)}
+    AlertDialog(onDismissRequest=onDismiss,title={Text(if(reminder==null)"Новое напоминание" else "Изменить напоминание")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+        OutlinedTextField(title,{title=it},label={Text("Что напомнить")},singleLine=true,modifier=Modifier.fillMaxWidth())
+        OutlinedButton(onClick={pickingTime=true},Modifier.fillMaxWidth()){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(6.dp));Text("Время · ${hour.toString().padStart(2,'0')}:${minute.toString().padStart(2,'0')}")}
+        Text("Повторять",fontWeight=FontWeight.SemiBold)
+        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(1 to "1 день",2 to "2 дня",7 to "7 дней").forEach{(days,label)->FilterChip(selected=interval.toIntOrNull()==days,onClick={interval=days.toString()},label={Text(label)})}}
+        OutlinedTextField(interval,{interval=it.filter(Char::isDigit).take(3)},label={Text("Интервал, дней")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth())
+        Row(verticalAlignment=Alignment.CenterVertically){Text("Включено",Modifier.weight(1f));Switch(enabled,{enabled=it})}
+    }},confirmButton={TextButton(onClick={onSave((reminder?:BabyReminder(title=title,anchorEpochDay=today)).copy(title=title,intervalDays=interval.toInt(),hour=hour,minute=minute,enabled=enabled))},enabled=title.isNotBlank()&&interval.toIntOrNull()?.let{it>0}==true){Text("Сохранить")}},dismissButton={TextButton(onClick=onDismiss){Text("Отмена")}})
+    if(pickingTime){val picker=rememberTimePickerState(hour,minute,true);AlertDialog(onDismissRequest={pickingTime=false},title={Text("Время напоминания")},text={TimePicker(picker)},confirmButton={TextButton(onClick={hour=picker.hour;minute=picker.minute;pickingTime=false}){Text("Готово")}},dismissButton={TextButton(onClick={pickingTime=false}){Text("Отмена")}})}
+}
+
+private fun reminderTime(reminder:BabyReminder)="${reminder.hour.toString().padStart(2,'0')}:${reminder.minute.toString().padStart(2,'0')}"
+private fun reminderFrequency(days:Int)=when(days){1->"каждый день";2->"через день";7->"раз в неделю";else->"каждые $days дн."}
 
 @Composable internal fun PumpingDialog(defaultSide:FeedingKind,onDismiss:()->Unit,onSave:(FeedingKind,Int)->Unit){
     var side by remember { mutableStateOf(defaultSide) }

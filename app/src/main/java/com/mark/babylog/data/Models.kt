@@ -49,10 +49,33 @@ data class FamilyMembership(@PrimaryKey val singleton:Int=1,val householdId:Stri
 @Entity(tableName="sync_metadata")
 data class SyncMetadata(@PrimaryKey val key:String,val value:String)
 
+@Entity(tableName="reminders")
+data class BabyReminder(
+    @PrimaryKey val id:String=UUID.randomUUID().toString(),
+    val title:String,
+    val hour:Int=9,
+    val minute:Int=0,
+    val intervalDays:Int=1,
+    val anchorEpochDay:Long,
+    val enabled:Boolean=true,
+    val createdAt:Long=System.currentTimeMillis()
+)
+
+@Entity(
+    tableName="reminder_completions",
+    primaryKeys=["reminderId","scheduledEpochDay"],
+    foreignKeys=[ForeignKey(entity=BabyReminder::class,parentColumns=["id"],childColumns=["reminderId"],onDelete=ForeignKey.CASCADE)],
+    indices=[Index("reminderId")]
+)
+data class ReminderCompletion(val reminderId:String,val scheduledEpochDay:Long,val completedAt:Long=System.currentTimeMillis())
+
 @Dao
 interface EventDao {
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt DESC") fun observeAll():Flow<List<BabyEvent>>
+    @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt DESC LIMIT :limit") fun observeRecent(limit:Int):Flow<List<BabyEvent>>
+    @Query("SELECT COUNT(*) FROM events WHERE deletedAt IS NULL") fun observeVisibleCount():Flow<Int>
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt") suspend fun allForTest():List<BabyEvent>
+    @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt") suspend fun allForExport():List<BabyEvent>
     @Query("SELECT * FROM sleep_segments ORDER BY startedAt") suspend fun allSegmentsForTest():List<SleepSegment>
     @Query("SELECT * FROM sleep_segments ORDER BY startedAt") fun observeSegments():Flow<List<SleepSegment>>
     @Query("SELECT * FROM events WHERE type='FEEDING' AND endedAt IS NULL AND deletedAt IS NULL ORDER BY startedAt DESC LIMIT 1") suspend fun active():BabyEvent?
@@ -77,6 +100,16 @@ interface EventDao {
     @Query("SELECT * FROM family_membership WHERE singleton=1") suspend fun membership():FamilyMembership?
     @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putMembership(value:FamilyMembership)
     @Query("DELETE FROM family_membership") suspend fun clearMembership()
+    @Query("SELECT * FROM reminders ORDER BY createdAt, title") fun observeReminders():Flow<List<BabyReminder>>
+    @Query("SELECT * FROM reminder_completions ORDER BY completedAt DESC") fun observeReminderCompletions():Flow<List<ReminderCompletion>>
+    @Query("SELECT * FROM reminders ORDER BY createdAt, title") suspend fun reminders():List<BabyReminder>
+    @Query("SELECT * FROM reminders WHERE id=:id LIMIT 1") suspend fun reminder(id:String):BabyReminder?
+    @Query("SELECT COUNT(*) FROM reminders") suspend fun reminderCount():Int
+    @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putReminder(reminder:BabyReminder)
+    @Delete suspend fun deleteReminder(reminder:BabyReminder)
+    @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putReminderCompletion(completion:ReminderCompletion)
+    @Query("DELETE FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay") suspend fun deleteReminderCompletion(reminderId:String,epochDay:Long)
+    @Query("SELECT * FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay LIMIT 1") suspend fun reminderCompletion(reminderId:String,epochDay:Long):ReminderCompletion?
 
     @Transaction suspend fun startFeeding(kind:FeedingKind,time:Long,owner:FamilyMembership?=null):BabyEvent {
         active()?.let{finish(it.id,time)}
@@ -110,6 +143,6 @@ class Converters {
     @TypeConverter fun stringToSync(v:String)=SyncState.valueOf(v)
 }
 
-@Database(entities=[BabyEvent::class,SleepSegment::class,SyncOperation::class,FamilyMembership::class,SyncMetadata::class],version=2,exportSchema=false)
+@Database(entities=[BabyEvent::class,SleepSegment::class,SyncOperation::class,FamilyMembership::class,SyncMetadata::class,BabyReminder::class,ReminderCompletion::class],version=3,exportSchema=false)
 @TypeConverters(Converters::class)
 abstract class BabyDatabase:RoomDatabase(){abstract fun events():EventDao}

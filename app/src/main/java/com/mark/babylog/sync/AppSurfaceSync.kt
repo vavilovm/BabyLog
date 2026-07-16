@@ -1,6 +1,7 @@
 package com.mark.babylog.sync
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.*
 import android.appwidget.AppWidgetManager
 import android.content.*
@@ -24,6 +25,7 @@ import com.mark.babylog.widget.FeedingWidgetReceiver
 import com.mark.babylog.widget.SleepWidgetReceiver
 import com.mark.babylog.widget.FeedingHorizontalWidgetReceiver
 import com.mark.babylog.widget.FeedingMiniWidgetReceiver
+import com.mark.babylog.reminders.ReminderScheduler
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.AppWidgetId
 import androidx.glance.appwidget.runComposition
@@ -33,6 +35,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+@SuppressLint("RestrictedApi","MissingPermission")
 object AppSurfaceSync {
     private const val ACTIVE_TIMER_CHANNEL="active_timers_visible"
     // A new channel id promotes the persistent quick-start notification out of the
@@ -189,4 +192,4 @@ object AppSurfaceSync {
 
 class TimerActionReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{val app=context.applicationContext as BabyLogApp;when(intent.getStringExtra("command")){"STOP"->app.repository.stop();"FEED_LEFT"->app.repository.startFeeding(FeedingKind.LEFT);"FEED_RIGHT"->app.repository.startFeeding(FeedingKind.RIGHT);"SLEEP_LEFT"->app.repository.startSleep(SleepPosition.LEFT);"SLEEP_RIGHT"->app.repository.startSleep(SleepPosition.RIGHT)};app.familySync.schedule();AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}
 
-class BootReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){if(intent.action==Intent.ACTION_BOOT_COMPLETED){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}}
+class BootReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{ReminderScheduler.rescheduleAll(context);AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}

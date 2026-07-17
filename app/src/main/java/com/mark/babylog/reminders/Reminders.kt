@@ -31,7 +31,9 @@ import org.json.JSONObject
 import java.time.LocalDate
 import java.time.ZonedDateTime
 
-class ReminderRepository(private val app:BabyLogApp,private val database:BabyDatabase=app.database,private val requestSync:()->Unit={app.familySync.schedule()},private val reschedule:suspend()->Unit={ReminderScheduler.rescheduleAll(app)}){
+const val ONE_TIME_INTERVAL_DAYS=Int.MAX_VALUE
+
+class ReminderRepository(private val app:BabyLogApp,private val database:BabyDatabase=app.database,private val requestSync:()->Unit={app.familySync.schedule()},private val reschedule:suspend()->Unit={ReminderScheduler.rescheduleAll(app)},private val clearFired:(String)->Unit={ReminderScheduler.clearFired(app,it)}){
     private val dao get()=database.events()
     val reminders get()=dao.observeReminders()
     val completions get()=dao.observeReminderCompletions()
@@ -56,7 +58,7 @@ class ReminderRepository(private val app:BabyLogApp,private val database:BabyDat
             hour=value.hour.coerceIn(0,23),
             minute=value.minute.coerceIn(0,59),
             intervalDays=value.intervalDays.coerceAtLeast(1),
-            anchorEpochDay=if(old!=null&&old.intervalDays==value.intervalDays)old.anchorEpochDay else LocalDate.now().toEpochDay(),
+            anchorEpochDay=if(value.isOneTime)value.anchorEpochDay else if(old!=null&&old.intervalDays==value.intervalDays)old.anchorEpochDay else LocalDate.now().toEpochDay(),
             createdAt=old?.createdAt?:value.createdAt,
             updatedAt=now,
             deletedAt=null,
@@ -65,6 +67,7 @@ class ReminderRepository(private val app:BabyLogApp,private val database:BabyDat
         dao.putReminder(saved)
         if(owner!=null){queue("REMINDER_UPSERT",reminderJson(saved),now);requestSync()}
         ReminderScheduler.cancel(app,saved.id)
+        clearFired(saved.id)
         if(saved.enabled)ReminderScheduler.schedule(app,saved,includeMissedToday=true)
     }
 
@@ -76,6 +79,7 @@ class ReminderRepository(private val app:BabyLogApp,private val database:BabyDat
         if(owner!=null){queue("REMINDER_DELETE",reminderJson(deleted),now);requestSync()}
         ReminderScheduler.cancel(app,value.id)
         ReminderScheduler.cancelNotification(app,value.id)
+        clearFired(value.id)
     }
     suspend fun setEnabled(value:BabyReminder,enabled:Boolean)=save(value.copy(enabled=enabled))
     suspend fun complete(reminderId:String,epochDay:Long){
@@ -136,6 +140,7 @@ class ReminderRepository(private val app:BabyLogApp,private val database:BabyDat
                 syncState=SyncState.SYNCED
             )
             dao.putReminder(value)
+            if(existing==null||remoteUpdatedAt>existing.updatedAt)clearFired(id)
             if(value.deletedAt!=null){ReminderScheduler.cancel(app,id);ReminderScheduler.cancelNotification(app,id)}
         }
         reschedule()
@@ -169,10 +174,14 @@ class ReminderRepository(private val app:BabyLogApp,private val database:BabyDat
 internal fun shouldApplyRemote(localState:SyncState?,localUpdatedAt:Long,remoteUpdatedAt:Long)=localState!=SyncState.PENDING||localUpdatedAt<=remoteUpdatedAt
 
 internal fun BabyReminder.occursOn(date:LocalDate):Boolean =
-    date.toEpochDay()>=anchorEpochDay && Math.floorMod(date.toEpochDay()-anchorEpochDay,intervalDays.toLong())==0L
+    if(isOneTime)date.toEpochDay()==anchorEpochDay
+    else date.toEpochDay()>=anchorEpochDay && Math.floorMod(date.toEpochDay()-anchorEpochDay,intervalDays.toLong())==0L
+
+val BabyReminder.isOneTime:Boolean get()=intervalDays==ONE_TIME_INTERVAL_DAYS
 
 object ReminderScheduler{
     private const val CHANNEL="scheduled_reminders_silent"
+    private const val FIRED_PREFS="one_time_reminders_fired"
     private const val ACTION_FIRE="com.mark.babylog.REMINDER_FIRE"
     internal const val ACTION_DONE="com.mark.babylog.REMINDER_DONE"
     internal const val EXTRA_ID="reminder_id"
@@ -188,6 +197,7 @@ object ReminderScheduler{
 
     suspend fun schedule(context:Context,reminder:BabyReminder,includeMissedToday:Boolean){
         if(!reminder.enabled||reminder.deletedAt!=null)return
+        if(reminder.isOneTime&&hasFired(context,reminder.id,reminder.anchorEpochDay))return
         val app=context.applicationContext as BabyLogApp
         val now=ZonedDateTime.now()
         val next=nextOccurrence(reminder,now,includeMissedToday){day->app.database.events().reminderCompletion(reminder.id,day.toEpochDay())!=null}?:return
@@ -196,6 +206,13 @@ object ReminderScheduler{
     }
 
     private suspend fun nextOccurrence(reminder:BabyReminder,now:ZonedDateTime,includeMissedToday:Boolean,isComplete:suspend(LocalDate)->Boolean):ZonedDateTime?{
+        if(reminder.isOneTime){
+            val date=LocalDate.ofEpochDay(reminder.anchorEpochDay)
+            if(isComplete(date))return null
+            val candidate=date.atTime(reminder.hour,reminder.minute).atZone(now.zone)
+            if(candidate.isAfter(now))return candidate
+            return if(includeMissedToday&&date==now.toLocalDate())now.plusSeconds(2) else null
+        }
         var date=now.toLocalDate()
         repeat(3660){
             if(reminder.occursOn(date)&&!isComplete(date)){
@@ -210,6 +227,7 @@ object ReminderScheduler{
 
     fun cancel(context:Context,id:String){(context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(alarmIntent(context,id,0))}
     fun cancelNotification(context:Context,id:String)=NotificationManagerCompat.from(context).cancel(notificationId(id))
+    fun clearFired(context:Context,id:String)=context.getSharedPreferences(FIRED_PREFS,Context.MODE_PRIVATE).edit().remove(id).apply()
 
     private fun alarmIntent(context:Context,id:String,day:Long)=PendingIntent.getBroadcast(
         context,requestCode(id),Intent(context,ReminderReceiver::class.java).setAction(ACTION_FIRE).setData(Uri.parse("babylog://reminder/$id")).putExtra(EXTRA_ID,id).putExtra(EXTRA_DAY,day),
@@ -222,14 +240,15 @@ object ReminderScheduler{
         val reminder=dao.reminder(id)?:return
         val date=LocalDate.ofEpochDay(day)
         if(!reminder.enabled||reminder.deletedAt!=null)return
+        if(reminder.isOneTime&&hasFired(context,id,day))return
         if(!reminder.occursOn(date)||dao.reminderCompletion(id,day)!=null){schedule(context,reminder,includeMissedToday=false);return}
-        show(context,reminder,day)
+        if(show(context,reminder,day)&&reminder.isOneTime)markFired(context,id,day)
         schedule(context,reminder,includeMissedToday=false)
     }
 
-    private fun show(context:Context,reminder:BabyReminder,day:Long){
+    private fun show(context:Context,reminder:BabyReminder,day:Long):Boolean{
         createChannel(context)
-        if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
+        if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return false
         val open=PendingIntent.getActivity(context,requestCode(reminder.id),Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val done=PendingIntent.getBroadcast(context,requestCode(reminder.id)+1,Intent(context,ReminderReceiver::class.java).setAction(ACTION_DONE).setData(Uri.parse("babylog://reminder/${reminder.id}/done/$day")).putExtra(EXTRA_ID,reminder.id).putExtra(EXTRA_DAY,day),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification=NotificationCompat.Builder(context,CHANNEL)
@@ -246,6 +265,7 @@ object ReminderScheduler{
             .addAction(0,"Готово",done)
             .build()
         NotificationManagerCompat.from(context).notify(notificationId(reminder.id),notification)
+        return true
     }
 
     private fun createChannel(context:Context){
@@ -256,6 +276,8 @@ object ReminderScheduler{
 
     private fun requestCode(id:String)=id.hashCode() and 0x3fffffff
     private fun notificationId(id:String)=10_000+(requestCode(id)%100_000)
+    private fun hasFired(context:Context,id:String,day:Long)=context.getSharedPreferences(FIRED_PREFS,Context.MODE_PRIVATE).getLong(id,Long.MIN_VALUE)==day
+    private fun markFired(context:Context,id:String,day:Long)=context.getSharedPreferences(FIRED_PREFS,Context.MODE_PRIVATE).edit().putLong(id,day).apply()
 }
 
 class ReminderReceiver:BroadcastReceiver(){

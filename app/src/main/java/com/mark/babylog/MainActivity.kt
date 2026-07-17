@@ -44,11 +44,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mark.babylog.data.*
 import com.mark.babylog.sync.AppSurfaceSync
+import com.mark.babylog.reminders.ONE_TIME_INTERVAL_DAYS
 import com.mark.babylog.reminders.ReminderScheduler
+import com.mark.babylog.reminders.isOneTime
 import com.mark.babylog.reminders.occursOn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -153,7 +157,7 @@ internal fun historyEvents(events:List<BabyEvent>,pumpingOnly:Boolean)=events.fi
 @Composable private fun ReminderSettingsDialog(reminders:List<BabyReminder>,onDismiss:()->Unit,onAdd:()->Unit,onEdit:(BabyReminder)->Unit,onToggle:(BabyReminder,Boolean)->Unit,onDelete:(BabyReminder)->Unit){
     AlertDialog(onDismissRequest=onDismiss,title={Text("Напоминания")},text={LazyColumn(Modifier.fillMaxWidth().heightIn(max=430.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
         if(reminders.isEmpty())item{Text("Напоминаний нет",color=MaterialTheme.colorScheme.onSurfaceVariant)}
-        items(reminders,key={it.id}){reminder->Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surfaceVariant){Row(Modifier.fillMaxWidth().padding(8.dp),verticalAlignment=Alignment.CenterVertically){Switch(reminder.enabled,{onToggle(reminder,it)},modifier=Modifier.padding(end=8.dp));Column(Modifier.weight(1f)){Text(reminder.title,fontWeight=FontWeight.SemiBold,maxLines=1);Text("${reminderTime(reminder)} · ${reminderFrequency(reminder.intervalDays)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};IconButton(onClick={onEdit(reminder)}){Icon(Icons.Default.Edit,"Изменить")};IconButton(onClick={onDelete(reminder)}){Icon(Icons.Default.Delete,"Удалить",tint=MaterialTheme.colorScheme.error)}}}}
+        items(reminders,key={it.id}){reminder->Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surfaceVariant){Row(Modifier.fillMaxWidth().padding(8.dp),verticalAlignment=Alignment.CenterVertically){Switch(reminder.enabled,{onToggle(reminder,it)},modifier=Modifier.padding(end=8.dp));Column(Modifier.weight(1f)){Text(reminder.title,fontWeight=FontWeight.SemiBold,maxLines=1);Text("${reminderTime(reminder)} · ${reminderFrequency(reminder)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};IconButton(onClick={onEdit(reminder)}){Icon(Icons.Default.Edit,"Изменить")};IconButton(onClick={onDelete(reminder)}){Icon(Icons.Default.Delete,"Удалить",tint=MaterialTheme.colorScheme.error)}}}}
         item{OutlinedButton(onClick=onAdd,Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Spacer(Modifier.width(6.dp));Text("Добавить напоминание")}}
     }},confirmButton={TextButton(onClick=onDismiss){Text("Готово")}})
 }
@@ -164,22 +168,29 @@ internal fun historyEvents(events:List<BabyEvent>,pumpingOnly:Boolean)=events.fi
     var title by remember(reminder?.id){mutableStateOf(reminder?.title.orEmpty())}
     var hour by remember(reminder?.id){mutableIntStateOf(reminder?.hour?:9)}
     var minute by remember(reminder?.id){mutableIntStateOf(reminder?.minute?:0)}
-    var interval by remember(reminder?.id){mutableStateOf((reminder?.intervalDays?:1).toString())}
+    var interval by remember(reminder?.id){mutableStateOf(if(reminder?.isOneTime==true)"1" else (reminder?.intervalDays?:1).toString())}
+    var oneTime by remember(reminder?.id){mutableStateOf(reminder?.isOneTime==true)}
+    var scheduledDay by remember(reminder?.id){mutableLongStateOf(reminder?.anchorEpochDay?:today)}
     var enabled by remember(reminder?.id){mutableStateOf(reminder?.enabled?:true)}
     var pickingTime by remember{mutableStateOf(false)}
+    var pickingDate by remember{mutableStateOf(false)}
     AlertDialog(onDismissRequest=onDismiss,title={Text(if(reminder==null)"Новое напоминание" else "Изменить напоминание")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
         OutlinedTextField(title,{title=it},label={Text("Что напомнить")},singleLine=true,modifier=Modifier.fillMaxWidth())
         OutlinedButton(onClick={pickingTime=true},Modifier.fillMaxWidth()){Icon(Icons.Default.Schedule,null);Spacer(Modifier.width(6.dp));Text("Время · ${hour.toString().padStart(2,'0')}:${minute.toString().padStart(2,'0')}")}
-        Text("Повторять",fontWeight=FontWeight.SemiBold)
-        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(1 to "1 день",2 to "2 дня",7 to "7 дней").forEach{(days,label)->FilterChip(selected=interval.toIntOrNull()==days,onClick={interval=days.toString()},label={Text(label)})}}
-        OutlinedTextField(interval,{interval=it.filter(Char::isDigit).take(3)},label={Text("Интервал, дней")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth())
+        Text("Расписание",fontWeight=FontWeight.SemiBold)
+        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){FilterChip(selected=oneTime,onClick={oneTime=true},label={Text("Один раз")});FilterChip(selected=!oneTime,onClick={oneTime=false},label={Text("Повторять")})}
+        if(oneTime)OutlinedButton(onClick={pickingDate=true},Modifier.fillMaxWidth()){Icon(Icons.Default.CalendarMonth,null);Spacer(Modifier.width(6.dp));Text("Дата · ${reminderDate(scheduledDay)}")}
+        else Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(1 to "1 день",2 to "2 дня",7 to "7 дней").forEach{(days,label)->FilterChip(selected=interval.toIntOrNull()==days,onClick={interval=days.toString()},label={Text(label)})}};OutlinedTextField(interval,{interval=it.filter(Char::isDigit).take(3)},label={Text("Интервал, дней")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.fillMaxWidth())}
         Row(verticalAlignment=Alignment.CenterVertically){Text("Включено",Modifier.weight(1f));Switch(enabled,{enabled=it})}
-    }},confirmButton={TextButton(onClick={onSave((reminder?:BabyReminder(title=title,anchorEpochDay=today)).copy(title=title,intervalDays=interval.toInt(),hour=hour,minute=minute,enabled=enabled))},enabled=title.isNotBlank()&&interval.toIntOrNull()?.let{it>0}==true){Text("Сохранить")}},dismissButton={TextButton(onClick=onDismiss){Text("Отмена")}})
+    }},confirmButton={TextButton(onClick={onSave((reminder?:BabyReminder(title=title,anchorEpochDay=today)).copy(title=title,intervalDays=if(oneTime)ONE_TIME_INTERVAL_DAYS else interval.toInt(),anchorEpochDay=if(oneTime)scheduledDay else reminder?.anchorEpochDay?:today,hour=hour,minute=minute,enabled=enabled))},enabled=title.isNotBlank()&&(oneTime||interval.toIntOrNull()?.let{it>0}==true)){Text("Сохранить")}},dismissButton={TextButton(onClick=onDismiss){Text("Отмена")}})
     if(pickingTime){val picker=rememberTimePickerState(hour,minute,true);AlertDialog(onDismissRequest={pickingTime=false},title={Text("Время напоминания")},text={TimePicker(picker)},confirmButton={TextButton(onClick={hour=picker.hour;minute=picker.minute;pickingTime=false}){Text("Готово")}},dismissButton={TextButton(onClick={pickingTime=false}){Text("Отмена")}})}
+    if(pickingDate){val picker=rememberDatePickerState(initialSelectedDateMillis=LocalDate.ofEpochDay(scheduledDay).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli());DatePickerDialog(onDismissRequest={pickingDate=false},confirmButton={TextButton(onClick={picker.selectedDateMillis?.let{scheduledDay=java.time.Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()};pickingDate=false}){Text("Готово")}},dismissButton={TextButton(onClick={pickingDate=false}){Text("Отмена")}}){DatePicker(picker)}}
 }
 
 private fun reminderTime(reminder:BabyReminder)="${reminder.hour.toString().padStart(2,'0')}:${reminder.minute.toString().padStart(2,'0')}"
-private fun reminderFrequency(days:Int)=when(days){1->"каждый день";2->"через день";7->"раз в неделю";else->"каждые $days дн."}
+private val reminderDateFormat=DateTimeFormatter.ofPattern("dd.MM.yyyy")
+private fun reminderDate(epochDay:Long)=LocalDate.ofEpochDay(epochDay).format(reminderDateFormat)
+private fun reminderFrequency(reminder:BabyReminder)=if(reminder.isOneTime)"один раз · ${reminderDate(reminder.anchorEpochDay)}" else when(reminder.intervalDays){1->"каждый день";2->"через день";7->"раз в неделю";else->"каждые ${reminder.intervalDays} дн."}
 
 @Composable internal fun PumpingDialog(defaultSide:FeedingKind,onDismiss:()->Unit,onSave:(FeedingKind,Int)->Unit){
     var side by remember { mutableStateOf(defaultSide) }

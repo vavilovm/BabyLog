@@ -108,4 +108,11 @@ class ReminderAndPagingTest{
         assertEquals(249L,firstPage.first().startedAt)
         assertEquals(250,db.events().observeVisibleCount().first())
     }
+
+    @Test fun statisticsLoadsTheWholeSelectedDayInsteadOfHistoryPage()=runTest{
+        repeat(140){index->db.events().insert(BabyEvent(type=EventType.SLEEP,detail="LEFT",startedAt=1_000L+index))}
+        db.events().insert(BabyEvent(type=EventType.SLEEP,detail="RIGHT",startedAt=2_000L))
+        assertEquals(140,db.events().observeDay(1_000L,2_000L).first().size)
+        assertTrue(db.events().observeDay(2_000L,3_000L).first().all{it.startedAt>=2_000L})
+    }
 }

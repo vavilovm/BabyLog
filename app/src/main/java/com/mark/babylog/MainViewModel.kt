@@ -15,12 +15,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.*
 
 data class UiState(val events: List<BabyEvent> = emptyList(), val segments: List<SleepSegment> = emptyList(),val totalEvents:Int=events.size) {
     val active get() = events.firstOrNull { it.type == EventType.FEEDING && it.endedAt == null }
 }
 data class ReminderUiState(val reminders:List<BabyReminder> = emptyList(),val completions:List<ReminderCompletion> = emptyList())
+data class DailyStatisticsState(val day:LocalDate=LocalDate.now(),val events:List<BabyEvent> = emptyList(),val loading:Boolean=true)
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -29,6 +31,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val repository=babyApp.repository
     private val historyLimit=MutableStateFlow(100)
     val state = combine(historyLimit.flatMapLatest(dao::observeRecent),dao.observeVisibleCount()) { e, total -> UiState(e,totalEvents=total) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
+    private val statisticsDay=MutableStateFlow(LocalDate.now())
+    val statisticsState=statisticsDay.flatMapLatest { day ->
+        val zone=ZoneId.systemDefault()
+        val start=day.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end=day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        dao.observeDay(start,end).map{DailyStatisticsState(day,it,false)}.onStart{emit(DailyStatisticsState(day,loading=true))}
+    }.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),DailyStatisticsState())
     val reminderState=combine(babyApp.reminderRepository.reminders,babyApp.reminderRepository.completions,::ReminderUiState).stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),ReminderUiState())
     init { viewModelScope.launch { sync() } }
 
@@ -46,6 +55,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun updateEvent(event: BabyEvent) = viewModelScope.launch { repository.updateEvent(event);sync() }
     fun delete(event: BabyEvent) = viewModelScope.launch { repository.deleteEvent(event);sync() }
     fun loadMoreHistory(){historyLimit.update{current->minOf(current+100,maxOf(current,state.value.totalEvents))}}
+    fun selectStatisticsDay(day:LocalDate){statisticsDay.value=day.coerceAtMost(LocalDate.now())}
     fun saveReminder(reminder:BabyReminder)=viewModelScope.launch{babyApp.reminderRepository.save(reminder)}
     fun deleteReminder(reminder:BabyReminder)=viewModelScope.launch{babyApp.reminderRepository.delete(reminder)}
     fun setReminderEnabled(reminder:BabyReminder,enabled:Boolean)=viewModelScope.launch{babyApp.reminderRepository.setEnabled(reminder,enabled)}

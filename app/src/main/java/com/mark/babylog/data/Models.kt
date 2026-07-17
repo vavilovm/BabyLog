@@ -83,6 +83,7 @@ data class ReminderCompletion(
 interface EventDao {
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt DESC") fun observeAll():Flow<List<BabyEvent>>
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt DESC LIMIT :limit") fun observeRecent(limit:Int):Flow<List<BabyEvent>>
+    @Query("SELECT * FROM events WHERE deletedAt IS NULL AND startedAt >= :startInclusive AND startedAt < :endExclusive ORDER BY startedAt") fun observeDay(startInclusive:Long,endExclusive:Long):Flow<List<BabyEvent>>
     @Query("SELECT COUNT(*) FROM events WHERE deletedAt IS NULL") fun observeVisibleCount():Flow<Int>
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt") suspend fun allForTest():List<BabyEvent>
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt") suspend fun allForExport():List<BabyEvent>

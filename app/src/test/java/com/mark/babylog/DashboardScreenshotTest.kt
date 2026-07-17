@@ -22,4 +22,19 @@ class DashboardScreenshotTest {
     @Test fun bottleTap_asksForRequiredVolume(){paparazzi.snapshot{BabyTheme{BottleVolumeDialog({},{})}}}
     @Test fun historyFilterAndMinuteMovement_work(){val events=listOf(BabyEvent(1,EventType.PUMPING,"LEFT:90",1,1),BabyEvent(2,EventType.FEEDING,"RIGHT",2,2));org.junit.Assert.assertEquals(listOf(1L),historyEvents(events,true).map{it.id});org.junit.Assert.assertEquals(360_000L,moveMinutes(60_000,5))}
     @Test fun reminderPanel_keepsPendingAndCompletedCompact(){val day=java.time.LocalDate.now().toEpochDay();val reminders=listOf(BabyReminder(id="k",title="Дать витамин К",hour=9,anchorEpochDay=day),BabyReminder(id="d",title="Дать витамин Д",hour=9,anchorEpochDay=day));paparazzi.snapshot{BabyTheme{ReminderPanel(ReminderUiState(reminders,listOf(ReminderCompletion("k",day))),{},{},{})}}}
+    @Test fun dailyStatistics_showsFeedingRhythmAndUsefulTotals(){
+        val day=java.time.LocalDate.now()
+        val zone=java.time.ZoneId.systemDefault()
+        fun at(hour:Int,minute:Int=0)=day.atTime(hour,minute).atZone(zone).toInstant().toEpochMilli()
+        val events=listOf(
+            BabyEvent(1,EventType.FEEDING,"LEFT",at(7,30),at(7,45)),
+            BabyEvent(2,EventType.FEEDING,"RIGHT",at(7,45),at(7,58)),
+            BabyEvent(3,EventType.FEEDING,"BOTTLE:120",at(11),at(11)),
+            BabyEvent(4,EventType.FEEDING,"LEFT",at(14,20),at(14,38)),
+            BabyEvent(5,EventType.SLEEP,"LEFT",at(9),at(9)),
+            BabyEvent(6,EventType.SLEEP,"RIGHT",at(12),at(12)),
+            BabyEvent(7,EventType.PUMPING,"LEFT:90",at(16),at(16))
+        )
+        paparazzi.snapshot{BabyTheme{DailyStatisticsDialog(DailyStatisticsState(day,events,false),at(19),{}, {})}}
+    }
 }

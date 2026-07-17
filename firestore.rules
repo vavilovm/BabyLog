@@ -8,6 +8,8 @@ service cloud.firestore {
       allow read: if member(householdId); allow write: if false;
       match /members/{uid} { allow read: if member(householdId); allow write: if false; }
       match /events/{eventId} { allow read: if member(householdId); allow write: if false; }
+      match /reminders/{reminderId} { allow read: if member(householdId); allow write: if false; }
+      match /reminderCompletions/{completionId} { allow read: if member(householdId); allow write: if false; }
       match /commands/{commandId} { allow read: if member(householdId); allow write: if false; }
     }
     match /invites/{inviteId} { allow read, write: if false; }

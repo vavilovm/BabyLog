@@ -19,16 +19,20 @@ import com.mark.babylog.BabyLogApp
 import com.mark.babylog.MainActivity
 import com.mark.babylog.R
 import com.mark.babylog.data.BabyReminder
+import com.mark.babylog.data.BabyDatabase
 import com.mark.babylog.data.ReminderCompletion
+import com.mark.babylog.data.SyncOperation
+import com.mark.babylog.data.SyncState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.time.LocalDate
 import java.time.ZonedDateTime
 
-class ReminderRepository(private val app:BabyLogApp){
-    private val dao get()=app.database.events()
+class ReminderRepository(private val app:BabyLogApp,private val database:BabyDatabase=app.database,private val requestSync:()->Unit={app.familySync.schedule()},private val reschedule:suspend()->Unit={ReminderScheduler.rescheduleAll(app)}){
+    private val dao get()=database.events()
     val reminders get()=dao.observeReminders()
     val completions get()=dao.observeReminderCompletions()
 
@@ -45,25 +49,124 @@ class ReminderRepository(private val app:BabyLogApp){
 
     suspend fun save(value:BabyReminder){
         val old=dao.reminder(value.id)
-        val today=LocalDate.now().toEpochDay()
+        val now=System.currentTimeMillis()
+        val owner=dao.membership()
         val saved=value.copy(
             title=value.title.trim(),
             hour=value.hour.coerceIn(0,23),
             minute=value.minute.coerceIn(0,59),
             intervalDays=value.intervalDays.coerceAtLeast(1),
-            anchorEpochDay=if(old!=null&&old.intervalDays==value.intervalDays)old.anchorEpochDay else today,
-            createdAt=old?.createdAt?:value.createdAt
+            anchorEpochDay=if(old!=null&&old.intervalDays==value.intervalDays)old.anchorEpochDay else LocalDate.now().toEpochDay(),
+            createdAt=old?.createdAt?:value.createdAt,
+            updatedAt=now,
+            deletedAt=null,
+            syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING
         )
         dao.putReminder(saved)
+        if(owner!=null){queue("REMINDER_UPSERT",reminderJson(saved),now);requestSync()}
         ReminderScheduler.cancel(app,saved.id)
         if(saved.enabled)ReminderScheduler.schedule(app,saved,includeMissedToday=true)
     }
 
-    suspend fun delete(value:BabyReminder){ReminderScheduler.cancel(app,value.id);dao.deleteReminder(value);ReminderScheduler.cancelNotification(app,value.id)}
+    suspend fun delete(value:BabyReminder){
+        val now=System.currentTimeMillis()
+        val owner=dao.membership()
+        val deleted=value.copy(updatedAt=now,deletedAt=now,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+        dao.putReminder(deleted)
+        if(owner!=null){queue("REMINDER_DELETE",reminderJson(deleted),now);requestSync()}
+        ReminderScheduler.cancel(app,value.id)
+        ReminderScheduler.cancelNotification(app,value.id)
+    }
     suspend fun setEnabled(value:BabyReminder,enabled:Boolean)=save(value.copy(enabled=enabled))
-    suspend fun complete(reminderId:String,epochDay:Long){dao.putReminderCompletion(ReminderCompletion(reminderId,epochDay));ReminderScheduler.cancelNotification(app,reminderId);ReminderScheduler.cancel(app,reminderId);dao.reminder(reminderId)?.takeIf{it.enabled}?.let{ReminderScheduler.schedule(app,it,includeMissedToday=false)}}
-    suspend fun undo(reminderId:String,epochDay:Long){dao.deleteReminderCompletion(reminderId,epochDay);dao.reminder(reminderId)?.takeIf{it.enabled}?.let{ReminderScheduler.schedule(app,it,includeMissedToday=true)}}
+    suspend fun complete(reminderId:String,epochDay:Long){
+        val now=System.currentTimeMillis()
+        val owner=dao.membership()
+        val value=ReminderCompletion(reminderId,epochDay,completedAt=now,updatedAt=now,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+        dao.putReminderCompletion(value)
+        if(owner!=null){queue("REMINDER_COMPLETE",completionJson(value),now);requestSync()}
+        ReminderScheduler.cancelNotification(app,reminderId)
+        ReminderScheduler.cancel(app,reminderId)
+        dao.reminder(reminderId)?.takeIf{it.enabled&&it.deletedAt==null}?.let{ReminderScheduler.schedule(app,it,includeMissedToday=false)}
+    }
+    suspend fun undo(reminderId:String,epochDay:Long){
+        val now=System.currentTimeMillis()
+        val owner=dao.membership()
+        val existing=dao.reminderCompletionIncludingDeleted(reminderId,epochDay)
+        val value=(existing?:ReminderCompletion(reminderId,epochDay,completedAt=now)).copy(updatedAt=now,deletedAt=now,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+        dao.putReminderCompletion(value)
+        if(owner!=null){queue("REMINDER_UNDO",completionJson(value),now);requestSync()}
+        dao.reminder(reminderId)?.takeIf{it.enabled&&it.deletedAt==null}?.let{ReminderScheduler.schedule(app,it,includeMissedToday=true)}
+    }
+
+    suspend fun attachToFamily(){
+        if(dao.membership()==null)return
+        var queued=false
+        dao.allRemindersForSync().filter{it.syncState==SyncState.LOCAL_ONLY}.forEach{value->
+            val pending=value.copy(syncState=SyncState.PENDING)
+            dao.putReminder(pending)
+            queue(if(value.deletedAt==null)"REMINDER_UPSERT" else "REMINDER_DELETE",reminderJson(pending),pending.updatedAt)
+            queued=true
+        }
+        dao.allReminderCompletionsForSync().filter{it.syncState==SyncState.LOCAL_ONLY}.forEach{value->
+            val pending=value.copy(syncState=SyncState.PENDING)
+            dao.putReminderCompletion(pending)
+            queue(if(value.deletedAt==null)"REMINDER_COMPLETE" else "REMINDER_UNDO",completionJson(pending),pending.updatedAt)
+            queued=true
+        }
+        if(queued)requestSync()
+    }
+
+    suspend fun applyRemoteReminders(values:List<Map<String,Any?>>){
+        values.forEach{raw->
+            val id=raw["id"] as? String?:return@forEach
+            val remoteUpdatedAt=(raw["updatedAt"] as? Number)?.toLong()?:0
+            val existing=dao.reminder(id)
+            if(!shouldApplyRemote(existing?.syncState,existing?.updatedAt?:0,remoteUpdatedAt))return@forEach
+            val value=BabyReminder(
+                id=id,
+                title=raw["title"] as? String?:return@forEach,
+                hour=(raw["hour"] as? Number)?.toInt()?:9,
+                minute=(raw["minute"] as? Number)?.toInt()?:0,
+                intervalDays=((raw["intervalDays"] as? Number)?.toInt()?:1).coerceAtLeast(1),
+                anchorEpochDay=(raw["anchorEpochDay"] as? Number)?.toLong()?:LocalDate.now().toEpochDay(),
+                enabled=raw["enabled"] as? Boolean?:true,
+                createdAt=(raw["createdAt"] as? Number)?.toLong()?:remoteUpdatedAt,
+                updatedAt=remoteUpdatedAt,
+                deletedAt=(raw["deletedAt"] as? Number)?.toLong(),
+                syncState=SyncState.SYNCED
+            )
+            dao.putReminder(value)
+            if(value.deletedAt!=null){ReminderScheduler.cancel(app,id);ReminderScheduler.cancelNotification(app,id)}
+        }
+        reschedule()
+    }
+
+    suspend fun applyRemoteCompletions(values:List<Map<String,Any?>>){
+        values.forEach{raw->
+            val reminderId=raw["reminderId"] as? String?:return@forEach
+            if(dao.reminder(reminderId)==null)return@forEach
+            val epochDay=(raw["scheduledEpochDay"] as? Number)?.toLong()?:return@forEach
+            val remoteUpdatedAt=(raw["updatedAt"] as? Number)?.toLong()?:0
+            val existing=dao.reminderCompletionIncludingDeleted(reminderId,epochDay)
+            if(!shouldApplyRemote(existing?.syncState,existing?.updatedAt?:0,remoteUpdatedAt))return@forEach
+            dao.putReminderCompletion(ReminderCompletion(
+                reminderId=reminderId,
+                scheduledEpochDay=epochDay,
+                completedAt=(raw["completedAt"] as? Number)?.toLong()?:remoteUpdatedAt,
+                updatedAt=remoteUpdatedAt,
+                deletedAt=(raw["deletedAt"] as? Number)?.toLong(),
+                syncState=SyncState.SYNCED
+            ))
+        }
+        reschedule()
+    }
+
+    private suspend fun queue(command:String,payload:JSONObject,time:Long){dao.put(SyncOperation(command=command,payload=payload.toString(),occurredAt=time))}
+    private fun reminderJson(value:BabyReminder)=JSONObject().apply{put("id",value.id);put("title",value.title);put("hour",value.hour);put("minute",value.minute);put("intervalDays",value.intervalDays);put("anchorEpochDay",value.anchorEpochDay);put("enabled",value.enabled);put("createdAt",value.createdAt);put("updatedAt",value.updatedAt);put("deletedAt",value.deletedAt?:JSONObject.NULL)}
+    private fun completionJson(value:ReminderCompletion)=JSONObject().apply{put("reminderId",value.reminderId);put("scheduledEpochDay",value.scheduledEpochDay);put("completedAt",value.completedAt);put("updatedAt",value.updatedAt);put("deletedAt",value.deletedAt?:JSONObject.NULL)}
 }
+
+internal fun shouldApplyRemote(localState:SyncState?,localUpdatedAt:Long,remoteUpdatedAt:Long)=localState!=SyncState.PENDING||localUpdatedAt<=remoteUpdatedAt
 
 internal fun BabyReminder.occursOn(date:LocalDate):Boolean =
     date.toEpochDay()>=anchorEpochDay && Math.floorMod(date.toEpochDay()-anchorEpochDay,intervalDays.toLong())==0L
@@ -84,7 +187,7 @@ object ReminderScheduler{
     }
 
     suspend fun schedule(context:Context,reminder:BabyReminder,includeMissedToday:Boolean){
-        if(!reminder.enabled)return
+        if(!reminder.enabled||reminder.deletedAt!=null)return
         val app=context.applicationContext as BabyLogApp
         val now=ZonedDateTime.now()
         val next=nextOccurrence(reminder,now,includeMissedToday){day->app.database.events().reminderCompletion(reminder.id,day.toEpochDay())!=null}?:return
@@ -118,7 +221,7 @@ object ReminderScheduler{
         val dao=app.database.events()
         val reminder=dao.reminder(id)?:return
         val date=LocalDate.ofEpochDay(day)
-        if(!reminder.enabled)return
+        if(!reminder.enabled||reminder.deletedAt!=null)return
         if(!reminder.occursOn(date)||dao.reminderCompletion(id,day)!=null){schedule(context,reminder,includeMissedToday=false);return}
         show(context,reminder,day)
         schedule(context,reminder,includeMissedToday=false)

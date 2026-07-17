@@ -58,7 +58,10 @@ data class BabyReminder(
     val intervalDays:Int=1,
     val anchorEpochDay:Long,
     val enabled:Boolean=true,
-    val createdAt:Long=System.currentTimeMillis()
+    val createdAt:Long=System.currentTimeMillis(),
+    val updatedAt:Long=System.currentTimeMillis(),
+    val deletedAt:Long?=null,
+    val syncState:SyncState=SyncState.LOCAL_ONLY
 )
 
 @Entity(
@@ -67,7 +70,14 @@ data class BabyReminder(
     foreignKeys=[ForeignKey(entity=BabyReminder::class,parentColumns=["id"],childColumns=["reminderId"],onDelete=ForeignKey.CASCADE)],
     indices=[Index("reminderId")]
 )
-data class ReminderCompletion(val reminderId:String,val scheduledEpochDay:Long,val completedAt:Long=System.currentTimeMillis())
+data class ReminderCompletion(
+    val reminderId:String,
+    val scheduledEpochDay:Long,
+    val completedAt:Long=System.currentTimeMillis(),
+    val updatedAt:Long=System.currentTimeMillis(),
+    val deletedAt:Long?=null,
+    val syncState:SyncState=SyncState.LOCAL_ONLY
+)
 
 @Dao
 interface EventDao {
@@ -100,16 +110,19 @@ interface EventDao {
     @Query("SELECT * FROM family_membership WHERE singleton=1") suspend fun membership():FamilyMembership?
     @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putMembership(value:FamilyMembership)
     @Query("DELETE FROM family_membership") suspend fun clearMembership()
-    @Query("SELECT * FROM reminders ORDER BY createdAt, title") fun observeReminders():Flow<List<BabyReminder>>
-    @Query("SELECT * FROM reminder_completions ORDER BY completedAt DESC") fun observeReminderCompletions():Flow<List<ReminderCompletion>>
-    @Query("SELECT * FROM reminders ORDER BY createdAt, title") suspend fun reminders():List<BabyReminder>
+    @Query("SELECT * FROM reminders WHERE deletedAt IS NULL ORDER BY createdAt, title") fun observeReminders():Flow<List<BabyReminder>>
+    @Query("SELECT * FROM reminder_completions WHERE deletedAt IS NULL ORDER BY completedAt DESC") fun observeReminderCompletions():Flow<List<ReminderCompletion>>
+    @Query("SELECT * FROM reminders WHERE deletedAt IS NULL ORDER BY createdAt, title") suspend fun reminders():List<BabyReminder>
+    @Query("SELECT * FROM reminders ORDER BY createdAt, title") suspend fun allRemindersForSync():List<BabyReminder>
+    @Query("SELECT * FROM reminder_completions ORDER BY completedAt") suspend fun allReminderCompletionsForSync():List<ReminderCompletion>
     @Query("SELECT * FROM reminders WHERE id=:id LIMIT 1") suspend fun reminder(id:String):BabyReminder?
-    @Query("SELECT COUNT(*) FROM reminders") suspend fun reminderCount():Int
-    @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putReminder(reminder:BabyReminder)
-    @Delete suspend fun deleteReminder(reminder:BabyReminder)
-    @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putReminderCompletion(completion:ReminderCompletion)
+    @Query("SELECT COUNT(*) FROM reminders WHERE deletedAt IS NULL") suspend fun reminderCount():Int
+    @Upsert suspend fun putReminder(reminder:BabyReminder)
+    @Delete suspend fun hardDeleteReminder(reminder:BabyReminder)
+    @Upsert suspend fun putReminderCompletion(completion:ReminderCompletion)
     @Query("DELETE FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay") suspend fun deleteReminderCompletion(reminderId:String,epochDay:Long)
-    @Query("SELECT * FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay LIMIT 1") suspend fun reminderCompletion(reminderId:String,epochDay:Long):ReminderCompletion?
+    @Query("SELECT * FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay AND deletedAt IS NULL LIMIT 1") suspend fun reminderCompletion(reminderId:String,epochDay:Long):ReminderCompletion?
+    @Query("SELECT * FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay LIMIT 1") suspend fun reminderCompletionIncludingDeleted(reminderId:String,epochDay:Long):ReminderCompletion?
 
     @Transaction suspend fun startFeeding(kind:FeedingKind,time:Long,owner:FamilyMembership?=null):BabyEvent {
         active()?.let{finish(it.id,time)}
@@ -143,6 +156,6 @@ class Converters {
     @TypeConverter fun stringToSync(v:String)=SyncState.valueOf(v)
 }
 
-@Database(entities=[BabyEvent::class,SleepSegment::class,SyncOperation::class,FamilyMembership::class,SyncMetadata::class,BabyReminder::class,ReminderCompletion::class],version=3,exportSchema=false)
+@Database(entities=[BabyEvent::class,SleepSegment::class,SyncOperation::class,FamilyMembership::class,SyncMetadata::class,BabyReminder::class,ReminderCompletion::class],version=4,exportSchema=false)
 @TypeConverters(Converters::class)
 abstract class BabyDatabase:RoomDatabase(){abstract fun events():EventDao}

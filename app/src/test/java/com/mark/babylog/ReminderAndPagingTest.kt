@@ -10,6 +10,7 @@ import com.mark.babylog.data.FamilyMembership
 import com.mark.babylog.data.ReminderCompletion
 import com.mark.babylog.data.SyncState
 import com.mark.babylog.reminders.ReminderRepository
+import com.mark.babylog.reminders.ONE_TIME_INTERVAL_DAYS
 import com.mark.babylog.reminders.occursOn
 import com.mark.babylog.reminders.shouldApplyRemote
 import kotlinx.coroutines.flow.first
@@ -36,6 +37,14 @@ class ReminderAndPagingTest{
         assertTrue(reminder.occursOn(anchor))
         assertFalse(reminder.occursOn(anchor.plusDays(1)))
         assertTrue(reminder.occursOn(anchor.plusDays(2)))
+    }
+
+    @Test fun oneTimeReminderOnlyOccursOnSelectedDate(){
+        val selected=LocalDate.of(2026,7,20)
+        val reminder=BabyReminder(title="Приём врача",intervalDays=ONE_TIME_INTERVAL_DAYS,anchorEpochDay=selected.toEpochDay())
+        assertFalse(reminder.occursOn(selected.minusDays(1)))
+        assertTrue(reminder.occursOn(selected))
+        assertFalse(reminder.occursOn(selected.plusDays(1)))
     }
 
     @Test fun completionCanBeUndone()=runTest{
@@ -68,7 +77,7 @@ class ReminderAndPagingTest{
         db.events().putReminder(reminder)
         db.events().putReminderCompletion(ReminderCompletion(reminder.id,reminder.anchorEpochDay))
         db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
-        ReminderRepository(BabyLogApp(),db,requestSync={},reschedule={}).attachToFamily()
+        ReminderRepository(BabyLogApp(),db,requestSync={},reschedule={},clearFired={}).attachToFamily()
         assertEquals(setOf("REMINDER_UPSERT","REMINDER_COMPLETE"),db.events().pending().map{it.command}.toSet())
         assertEquals(SyncState.PENDING,db.events().allRemindersForSync().single().syncState)
         assertEquals(SyncState.PENDING,db.events().allReminderCompletionsForSync().single().syncState)
@@ -78,7 +87,7 @@ class ReminderAndPagingTest{
         val day=LocalDate.now().toEpochDay()
         val local=BabyReminder(id="shared",title="Новое локальное",anchorEpochDay=day,updatedAt=200,syncState=SyncState.PENDING)
         db.events().putReminder(local)
-        val repository=ReminderRepository(BabyLogApp(),db,requestSync={},reschedule={})
+        val repository=ReminderRepository(BabyLogApp(),db,requestSync={},reschedule={},clearFired={})
         fun reminder(title:String,updatedAt:Long)=mapOf<String,Any?>("id" to "shared","title" to title,"hour" to 9,"minute" to 0,"intervalDays" to 1,"anchorEpochDay" to day,"enabled" to true,"createdAt" to 100L,"updatedAt" to updatedAt,"deletedAt" to null)
         repository.applyRemoteReminders(listOf(reminder("Старое с сервера",199)))
         assertEquals("Новое локальное",db.events().reminder("shared")?.title)

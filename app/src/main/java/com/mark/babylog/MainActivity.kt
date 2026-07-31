@@ -1141,7 +1141,6 @@ internal fun EditDialog(
     onDelete: () -> Unit,
 ) {
     var start by remember { mutableLongStateOf(e.startedAt) }
-    var end by remember { mutableLongStateOf(e.endedAt ?: e.startedAt) }
     var detail by remember {
         mutableStateOf(
             when (e.type) {
@@ -1162,7 +1161,7 @@ internal fun EditDialog(
                 .orEmpty()
         )
     }
-    var picking by remember { mutableStateOf<String?>(null) }
+    var pickingTime by remember { mutableStateOf(false) }
     val options =
         when (e.type) {
             EventType.FEEDING -> FeedingKind.entries.map { it.name to feedName(it.name) }
@@ -1183,11 +1182,12 @@ internal fun EditDialog(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Время", fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (e.type == EventType.SLEEP) "Отметка" else "Начало",
+                    if (e.type == EventType.FEEDING || e.type == EventType.SLEEP) "Отметка"
+                    else "Начало",
                     style = MaterialTheme.typography.labelMedium,
                 )
                 OutlinedButton(
-                    onClick = { picking = "start" },
+                    onClick = { pickingTime = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Default.Schedule, null)
@@ -1195,18 +1195,6 @@ internal fun EditDialog(
                     Text(clock(start), fontWeight = FontWeight.Bold)
                 }
                 MinuteShortcuts { start = moveMinutes(start, it).coerceAtLeast(0) }
-                if (e.type == EventType.FEEDING) {
-                    Text("Конец", style = MaterialTheme.typography.labelMedium)
-                    OutlinedButton(
-                        onClick = { picking = "end" },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Default.Schedule, null)
-                        Spacer(Modifier.width(5.dp))
-                        Text(clock(end), fontWeight = FontWeight.Bold)
-                    }
-                    MinuteShortcuts { delta -> end = moveMinutes(end, delta).coerceAtLeast(start) }
-                }
                 Text("Тип / положение", fontWeight = FontWeight.SemiBold)
                 options.forEach { (key, label) ->
                     FilterChip(
@@ -1241,15 +1229,7 @@ internal fun EditDialog(
                                 "BOTTLE:${volume.toInt()}"
                             else -> detail
                         }
-                    onSave(
-                        e.copy(
-                            startedAt = start,
-                            endedAt =
-                                if (e.type == EventType.FEEDING) end.coerceAtLeast(start)
-                                else start,
-                            detail = savedDetail,
-                        )
-                    )
+                    onSave(e.copy(startedAt = start, endedAt = start, detail = savedDetail))
                 },
                 enabled = !volumeRequired || volume.toIntOrNull()?.let { it > 0 } == true,
             ) {
@@ -1265,10 +1245,9 @@ internal fun EditDialog(
             }
         },
     )
-    picking?.let { target ->
-        val base = if (target == "start") start else end
-        val cal =
-            remember(target) { java.util.Calendar.getInstance().apply { timeInMillis = base } }
+    if (pickingTime) {
+        val base = start
+        val cal = remember(base) { java.util.Calendar.getInstance().apply { timeInMillis = base } }
         val picker =
             rememberTimePickerState(
                 cal.get(java.util.Calendar.HOUR_OF_DAY),
@@ -1276,21 +1255,20 @@ internal fun EditDialog(
                 true,
             )
         AlertDialog(
-            onDismissRequest = { picking = null },
-            title = { Text(if (target == "start") "Время начала" else "Время окончания") },
+            onDismissRequest = { pickingTime = false },
+            title = { Text("Время события") },
             text = { TimePicker(picker) },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val chosen = withTime(base, picker.hour, picker.minute)
-                        if (target == "start") start = chosen else end = chosen
-                        picking = null
+                        start = withTime(base, picker.hour, picker.minute)
+                        pickingTime = false
                     }
                 ) {
                     Text("Готово")
                 }
             },
-            dismissButton = { TextButton(onClick = { picking = null }) { Text("Отмена") } },
+            dismissButton = { TextButton(onClick = { pickingTime = false }) { Text("Отмена") } },
         )
     }
 }

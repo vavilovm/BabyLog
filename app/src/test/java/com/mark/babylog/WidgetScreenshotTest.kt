@@ -22,16 +22,16 @@ private const val NOW=1_000_000L
 
 class WidgetScreenshotTest {
     @get:Rule val paparazzi=Paparazzi(deviceConfig=DeviceConfig(screenWidth=320,screenHeight=205,orientation=ScreenOrientation.LANDSCAPE,density=Density.MEDIUM))
-    @Test fun feedingCompact_selection()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(null,null,NOW),null)}}
-    @Test fun feedingCompact_activeLeft()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"LEFT",NOW-42_000),null,NOW),"00:42")}}
-    @Test fun feedingCompact_finishedUsesEndTime(){val ui=feedingWidgetUi(null,BabyEvent(1,EventType.FEEDING,"RIGHT",NOW-120_000,NOW-30_000),NOW);org.junit.Assert.assertTrue(ui.status.contains("0:30 назад"))}
-    @Test fun bottleNeverStartsWidgetTimer(){val ui=feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"BOTTLE",NOW-42_000),null,NOW);org.junit.Assert.assertNull(ui.timerStartedAt);org.junit.Assert.assertEquals("BOTTLE",ui.buttons.last().command)}
+    @Test fun feedingCompact_selection()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(null,NOW),null)}}
+    @Test fun feedingCompact_activeLeft()=paparazzi.snapshot{BabyTheme{StandardPreview(feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"LEFT",NOW-42_000,NOW-42_000),NOW),null)}}
+    @Test fun feedingCompact_finishedUsesEndTime(){val ui=feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"RIGHT",NOW-120_000,NOW-30_000),NOW);org.junit.Assert.assertTrue(ui.status.contains("0:30 назад"))}
+    @Test fun feedingButtonsNeverTurnIntoStop(){val ui=feedingWidgetUi(BabyEvent(1,EventType.FEEDING,"LEFT",NOW-42_000,NOW-42_000),NOW);org.junit.Assert.assertEquals(listOf("LEFT","RIGHT","BOTTLE"),ui.buttons.map{it.command})}
     @Test fun sleepCompact_onlyLeftRight()=paparazzi.snapshot{BabyTheme{StandardPreview(sleepWidgetUi(null,NOW),null)}}
 }
 
 class HorizontalWidgetScreenshotTest {
     @get:Rule val paparazzi=Paparazzi(deviceConfig=DeviceConfig(screenWidth=430,screenHeight=145,orientation=ScreenOrientation.LANDSCAPE,density=Density.MEDIUM))
-    @Test fun feedingHorizontal_allActionsFit()=paparazzi.snapshot{BabyTheme{HorizontalPreview(feedingWidgetUi(null,null,NOW))}}
+    @Test fun feedingHorizontal_allActionsFit()=paparazzi.snapshot{BabyTheme{HorizontalPreview(feedingWidgetUi(null,NOW))}}
 }
 
 class MiniWidgetScreenshotTest {

@@ -35,6 +35,6 @@ class DashboardScreenshotTest {
             BabyEvent(6,EventType.SLEEP,"RIGHT",at(12),at(12)),
             BabyEvent(7,EventType.PUMPING,"LEFT:90",at(16),at(16))
         )
-        paparazzi.snapshot{BabyTheme{DailyStatisticsDialog(DailyStatisticsState(day,events,false),at(19),{}, {})}}
+        paparazzi.snapshot{BabyTheme{DailyStatisticsDialog(DailyStatisticsState(day,events,false),{}, {})}}
     }
 }

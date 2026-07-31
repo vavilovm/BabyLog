@@ -12,7 +12,7 @@ class DailyStatisticsTest{
     private val zone=ZoneId.of("UTC")
     private fun at(hour:Int,minute:Int=0)=day.atTime(hour,minute).atZone(zone).toInstant().toEpochMilli()
 
-    @Test fun consecutiveBreastSidesBecomeOneFeedingSession(){
+    @Test fun eachCompletedMarkCountsAsOneFeeding(){
         val events=listOf(
             BabyEvent(1,EventType.FEEDING,"LEFT",at(8),at(8,12)),
             BabyEvent(2,EventType.FEEDING,"RIGHT",at(8,12),at(8,22)),
@@ -25,14 +25,12 @@ class DailyStatisticsTest{
             BabyEvent(9,EventType.PUMPING,"RIGHT:110",at(16),at(16))
         )
 
-        val result=dailySummary(events,day,at(18),zone)
+        val result=dailySummary(events)
 
-        assertEquals(3,result.feedingCount)
-        assertEquals(3*60*60_000L,result.averageFeedingIntervalMs)
-        assertEquals(21*60_000L,result.averageFeedingDurationMs)
-        assertEquals(42*60_000L,result.totalBreastfeedingMs)
-        assertEquals(32*60_000L,result.leftBreastfeedingMs)
-        assertEquals(10*60_000L,result.rightBreastfeedingMs)
+        assertEquals(4,result.feedingCount)
+        assertEquals(120*60_000L,result.averageFeedingIntervalMs)
+        assertEquals(2,result.leftFeedingCount)
+        assertEquals(1,result.rightFeedingCount)
         assertEquals(1,result.bottleCount)
         assertEquals(120,result.bottleVolumeMl)
         assertEquals(2,result.sleepLeftCount)
@@ -41,14 +39,13 @@ class DailyStatisticsTest{
         assertEquals(200,result.pumpingVolumeMl)
     }
 
-    @Test fun breastSidesMoreThanThirtyMinutesApartAreSeparateFeedings(){
+    @Test fun frequencyUsesTheTimeBetweenMarks(){
         val result=dailySummary(listOf(
             BabyEvent(1,EventType.FEEDING,"LEFT",at(8),at(8,10)),
             BabyEvent(2,EventType.FEEDING,"RIGHT",at(8,41),at(8,51))
-        ),day,at(12),zone)
+        ))
 
         assertEquals(2,result.feedingCount)
         assertEquals(41*60_000L,result.averageFeedingIntervalMs)
-        assertEquals(10*60_000L,result.averageFeedingDurationMs)
     }
 }

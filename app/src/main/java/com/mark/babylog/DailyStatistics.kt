@@ -26,21 +26,16 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mark.babylog.data.*
 import java.time.LocalDate
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
-
-private const val FEEDING_SESSION_GAP_MS=30*60_000L
 
 internal data class DailySummary(
     val feedingCount:Int,
     val averageFeedingIntervalMs:Long?,
     val longestFeedingIntervalMs:Long?,
-    val averageFeedingDurationMs:Long?,
-    val totalBreastfeedingMs:Long,
-    val leftBreastfeedingMs:Long,
-    val rightBreastfeedingMs:Long,
+    val leftFeedingCount:Int,
+    val rightFeedingCount:Int,
     val firstFeedingAt:Long?,
     val lastFeedingAt:Long?,
     val bottleCount:Int,
@@ -52,45 +47,20 @@ internal data class DailySummary(
     val eventCount:Int
 )
 
-private data class FeedingSession(var startedAt:Long,var endedAt:Long,var measuredDurationMs:Long)
-
-internal fun dailySummary(events:List<BabyEvent>,day:LocalDate,now:Long=System.currentTimeMillis(),zone:ZoneId=ZoneId.systemDefault()):DailySummary{
-    val dayStart=day.atStartOfDay(zone).toInstant().toEpochMilli()
-    val dayEnd=day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+internal fun dailySummary(events:List<BabyEvent>):DailySummary{
     val feedings=events.filter{it.type==EventType.FEEDING}.sortedBy{it.startedAt}
-    val sessions=mutableListOf<FeedingSession>()
-    var leftMs=0L
-    var rightMs=0L
-    feedings.forEach{event->
-        val start=event.startedAt.coerceIn(dayStart,dayEnd)
-        val end=(event.endedAt?:now).coerceIn(start,dayEnd)
-        val measured=if(feedingKindOf(event.detail)==FeedingKind.BOTTLE)0 else end-start
-        when(feedingKindOf(event.detail)){
-            FeedingKind.LEFT->leftMs+=measured
-            FeedingKind.RIGHT->rightMs+=measured
-            FeedingKind.BOTTLE->Unit
-        }
-        val current=sessions.lastOrNull()
-        if(current!=null&&start-current.endedAt<=FEEDING_SESSION_GAP_MS){
-            current.endedAt=maxOf(current.endedAt,end)
-            current.measuredDurationMs+=measured
-        }else sessions+=FeedingSession(start,end,measured)
-    }
-    val intervals=sessions.zipWithNext{a,b->b.startedAt-a.startedAt}.filter{it>=0}
-    val measuredSessions=sessions.map{it.measuredDurationMs}.filter{it>0}
+    val intervals=feedings.zipWithNext{a,b->b.startedAt-a.startedAt}.filter{it>=0}
     val bottles=feedings.mapNotNull{bottleVolumeMl(it.detail)}
     val sleeps=events.filter{it.type==EventType.SLEEP}.mapNotNull{runCatching{SleepPosition.valueOf(it.detail)}.getOrNull()}
     val pumping=events.filter{it.type==EventType.PUMPING}.mapNotNull{it.detail.substringAfter(':',"").toIntOrNull()}
     return DailySummary(
-        feedingCount=sessions.size,
+        feedingCount=feedings.size,
         averageFeedingIntervalMs=intervals.takeIf{it.isNotEmpty()}?.average()?.roundToInt()?.toLong(),
         longestFeedingIntervalMs=intervals.maxOrNull(),
-        averageFeedingDurationMs=measuredSessions.takeIf{it.isNotEmpty()}?.average()?.roundToInt()?.toLong(),
-        totalBreastfeedingMs=leftMs+rightMs,
-        leftBreastfeedingMs=leftMs,
-        rightBreastfeedingMs=rightMs,
-        firstFeedingAt=sessions.firstOrNull()?.startedAt,
-        lastFeedingAt=sessions.lastOrNull()?.startedAt,
+        leftFeedingCount=feedings.count{feedingKindOf(it.detail)==FeedingKind.LEFT},
+        rightFeedingCount=feedings.count{feedingKindOf(it.detail)==FeedingKind.RIGHT},
+        firstFeedingAt=feedings.firstOrNull()?.startedAt,
+        lastFeedingAt=feedings.lastOrNull()?.startedAt,
         bottleCount=bottles.size,
         bottleVolumeMl=bottles.sum(),
         sleepLeftCount=sleeps.count{it==SleepPosition.LEFT},
@@ -101,9 +71,9 @@ internal fun dailySummary(events:List<BabyEvent>,day:LocalDate,now:Long=System.c
     )
 }
 
-@Composable internal fun DailyStatisticsDialog(state:DailyStatisticsState,now:Long,onDismiss:()->Unit,onDayChange:(LocalDate)->Unit){
+@Composable internal fun DailyStatisticsDialog(state:DailyStatisticsState,onDismiss:()->Unit,onDayChange:(LocalDate)->Unit){
     val today=LocalDate.now()
-    val summary=dailySummary(state.events,state.day,now)
+    val summary=dailySummary(state.events)
     Dialog(onDismissRequest=onDismiss,properties=DialogProperties(usePlatformDefaultWidth=false)){
         Surface(
             Modifier.fillMaxWidth(.94f).fillMaxHeight(.9f),
@@ -158,11 +128,7 @@ internal fun dailySummary(events:List<BabyEvent>,day:LocalDate,now:Long=System.c
             Metric("${summary.feedingCount}",plural(summary.feedingCount,"кормление","кормления","кормлений"),Modifier.weight(1f))
             Metric(summary.averageFeedingIntervalMs?.let{durationShort(it)}?:"—","в среднем каждые",Modifier.weight(1f))
         }
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            Metric(summary.averageFeedingDurationMs?.let{durationShort(it)}?:"—","в среднем у груди",Modifier.weight(1f))
-            Metric(durationShort(summary.totalBreastfeedingMs),"всего у груди",Modifier.weight(1f))
-        }
-        if(summary.totalBreastfeedingMs>0)BreastBalance(summary)
+        if(summary.leftFeedingCount+summary.rightFeedingCount>0)BreastBalance(summary)
         if(summary.bottleCount>0){
             HorizontalDivider()
             Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.LocalDrink,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(8.dp));Text("Из бутылочки",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));Text("${summary.bottleVolumeMl} мл · ${summary.bottleCount} ${plural(summary.bottleCount,"раз","раза","раз")}",fontWeight=FontWeight.Bold)}
@@ -171,14 +137,14 @@ internal fun dailySummary(events:List<BabyEvent>,day:LocalDate,now:Long=System.c
             HorizontalDivider()
             Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Schedule,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text("Ритм дня",fontWeight=FontWeight.SemiBold);Text("Первое ${statClock(summary.firstFeedingAt)} · последнее ${statClock(summary.lastFeedingAt!!)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};summary.longestFeedingIntervalMs?.let{Column(horizontalAlignment=Alignment.End){Text(durationShort(it),fontWeight=FontWeight.Bold);Text("макс. пауза",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
         }
-        Text("Смена груди в течение 30 минут считается одним кормлением.",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable private fun BreastBalance(summary:DailySummary){
-    val leftShare=summary.leftBreastfeedingMs.toFloat()/summary.totalBreastfeedingMs
+    val breastCount=summary.leftFeedingCount+summary.rightFeedingCount
+    val leftShare=summary.leftFeedingCount.toFloat()/breastCount
     Column(verticalArrangement=Arrangement.spacedBy(6.dp)){
-        Row{Text("Баланс груди",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));Text("L ${durationShort(summary.leftBreastfeedingMs)}  ·  R ${durationShort(summary.rightBreastfeedingMs)}",style=MaterialTheme.typography.bodySmall)}
+        Row{Text("Баланс груди",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));Text("L ${summary.leftFeedingCount}  ·  R ${summary.rightFeedingCount}",style=MaterialTheme.typography.bodySmall)}
         LinearProgressIndicator(progress={leftShare},modifier=Modifier.fillMaxWidth().height(8.dp),color=MaterialTheme.colorScheme.primary,trackColor=MaterialTheme.colorScheme.secondaryContainer)
     }
 }

@@ -20,7 +20,7 @@ class BabyLogApp : Application() {
     val repository by lazy { BabyLogRepository(database) }
     val reminderRepository by lazy { ReminderRepository(this) }
     val familySync by lazy { FamilySync(this) }
-    override fun onCreate(){super.onCreate();SyncWorker.periodic(this);appScope.launch{reminderRepository.ensureDefaults();reminderRepository.attachToFamily();ReminderScheduler.rescheduleAll(this@BabyLogApp);familySync.startRealtime();familySync.schedule()}}
+    override fun onCreate(){super.onCreate();SyncWorker.periodic(this);appScope.launch{repository.normalizeLegacyActiveFeeding();reminderRepository.ensureDefaults();reminderRepository.attachToFamily();ReminderScheduler.rescheduleAll(this@BabyLogApp);familySync.startRealtime();familySync.schedule()}}
 
     companion object{
         val MIGRATION_2_3=object:Migration(2,3){

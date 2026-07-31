@@ -19,7 +19,6 @@ import java.time.ZoneId
 import java.util.*
 
 data class UiState(val events: List<BabyEvent> = emptyList(), val segments: List<SleepSegment> = emptyList(),val totalEvents:Int=events.size) {
-    val active get() = events.firstOrNull { it.type == EventType.FEEDING && it.endedAt == null }
 }
 data class ReminderUiState(val reminders:List<BabyReminder> = emptyList(),val completions:List<ReminderCompletion> = emptyList())
 data class DailyStatisticsState(val day:LocalDate=LocalDate.now(),val events:List<BabyEvent> = emptyList(),val loading:Boolean=true)
@@ -45,13 +44,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val pendingCount=repository.pendingCount.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),0)
     val syncStatus=babyApp.familySync.status.asStateFlow()
     val familyMembers=babyApp.familySync.members.asStateFlow()
-    fun startFeeding(kind: FeedingKind) = viewModelScope.launch { repository.startFeeding(kind);sync() }
+    fun logFeeding(kind: FeedingKind) = viewModelScope.launch { repository.logFeeding(kind);sync() }
     fun startSleep(position: SleepPosition) = viewModelScope.launch { repository.startSleep(position);sync() }
     fun logPumping(side: FeedingKind, volumeMl: Int) = viewModelScope.launch { repository.logPumping(side,volumeMl);sync() }
     fun logBottle(volumeMl: Int) = viewModelScope.launch { repository.logBottle(volumeMl);sync() }
     fun changePosition(position: SleepPosition) = viewModelScope.launch { repository.changePosition(position);sync() }
-    fun stop() = viewModelScope.launch { repository.stop();sync() }
-    fun stopBottle(volumeMl: Int) = viewModelScope.launch { repository.stopBottle(volumeMl);sync() }
     fun updateEvent(event: BabyEvent) = viewModelScope.launch { repository.updateEvent(event);sync() }
     fun delete(event: BabyEvent) = viewModelScope.launch { repository.deleteEvent(event);sync() }
     fun loadMoreHistory(){historyLimit.update{current->minOf(current+100,maxOf(current,state.value.totalEvents))}}

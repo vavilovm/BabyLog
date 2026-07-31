@@ -7,6 +7,7 @@ import android.appwidget.AppWidgetManager
 import android.content.*
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
@@ -117,7 +118,11 @@ object AppSurfaceSync {
         if(lastFeed==null){
             setTextViewText(R.id.notification_chronometer,"Отметить кормление")
         }else{
-            setTextViewText(R.id.notification_chronometer,"Последнее: ${lastFeedCompactLabel(lastFeed)} · ${clock(lastFeed.endedAt?:lastFeed.startedAt)}")
+            // This is deliberately the elapsed time since the last completed
+            // feeding, not a timer for an active feeding.
+            val elapsed=(System.currentTimeMillis()-(lastFeed.endedAt?:lastFeed.startedAt)).coerceAtLeast(0)
+            setChronometer(R.id.notification_chronometer,SystemClock.elapsedRealtime()-elapsed,null,true)
+            setString(R.id.notification_chronometer,"setFormat","${lastFeedCompactLabel(lastFeed)} · %s")
         }
         applyCompactActions(context,actions)
     }
@@ -147,7 +152,6 @@ object AppSurfaceSync {
         }
     }
 
-    private fun clock(time:Long)=java.text.SimpleDateFormat("HH:mm",java.util.Locale.getDefault()).format(java.util.Date(time))
     private fun action(context:Context,command:String,request:Int)=if(command=="FEED_BOTTLE")PendingIntent.getActivity(context,request,MainActivity.bottleIntent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)else PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 }
 

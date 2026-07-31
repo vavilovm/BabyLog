@@ -15,30 +15,66 @@ android {
         applicationId = "com.mark.babylog"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "0.9.1"
+        versionCode = 36
+        versionName = "0.10.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    buildFeatures { compose = true; buildConfig = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     kotlinOptions { jvmTarget = "17" }
-    testOptions { unitTests.all { it.forkEvery = 1 } }
-    signingConfigs {
-        val storePath=System.getenv("BABYLOG_STORE_FILE")
-        val storePasswordValue=System.getenv("BABYLOG_STORE_PASSWORD")
-        val keyPasswordValue=System.getenv("BABYLOG_KEY_PASSWORD")
-        if(storePath!=null&&storePasswordValue!=null&&keyPasswordValue!=null)create("release"){
-            storeFile=rootProject.file(storePath)
-            storePassword=storePasswordValue
-            keyAlias="babylog"
-            keyPassword=keyPasswordValue
+    testOptions {
+        unitTests.all {
+            // Reusing the test JVM saves several seconds of Robolectric startup
+            // per class. Screenshot tests are an explicit local workflow and do
+            // not belong in the default behavioral suite or CI.
+            it.forkEvery = 0
+            val paparazziRequested =
+                gradle.startParameter.taskNames.any { task ->
+                    task.contains("Paparazzi", ignoreCase = true)
+                }
+            val screenshotsRequested =
+                providers
+                    .gradleProperty("includeScreenshots")
+                    .map(String::toBoolean)
+                    .getOrElse(false)
+            if (!paparazziRequested && !screenshotsRequested) {
+                it.exclude("**/*ScreenshotTest*")
+            }
         }
     }
+    signingConfigs {
+        val storePath = System.getenv("BABYLOG_STORE_FILE")
+        val storePasswordValue = System.getenv("BABYLOG_STORE_PASSWORD")
+        val keyPasswordValue = System.getenv("BABYLOG_KEY_PASSWORD")
+        if (storePath != null && storePasswordValue != null && keyPasswordValue != null)
+            create("release") {
+                storeFile = rootProject.file(storePath)
+                storePassword = storePasswordValue
+                keyAlias = "babylog"
+                keyPassword = keyPasswordValue
+            }
+    }
     buildTypes {
-        getByName("release") { signingConfig=signingConfigs.findByName("release") }
+        getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
     }
 }
+
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")

@@ -25,8 +25,12 @@ firebase deploy --only functions,firestore
 ## Сборка и тесты
 
 ```bash
+# Быстрые поведенческие тесты; скриншоты сюда не входят.
 ./gradlew testDebugUnitTest
+
+# Локальный визуальный отчёт и сравнение с эталонами.
 ./gradlew verifyPaparazziDebug
+
 ./gradlew assembleDebug
 ```
 
@@ -41,6 +45,10 @@ APK появится в `app/build/outputs/apk/debug/app-debug.apk`. Устан�
 ## Публикация обновлений
 
 Workflow `.github/workflows/android.yml` проверяет тесты и собирает APK после каждого push. APK можно скачать на странице запуска во вкладке **Actions** как artifact `BabyLog-debug`.
+
+Скриншотные тесты намеренно не запускаются в CI: обычные изменения быстро
+проверяются поведенческими тестами и Android Lint, а визуальный отчёт создаётся
+локально командами Paparazzi выше.
 
 Для удобных постоянных ссылок создавайте GitHub Release:
 

@@ -2,50 +2,58 @@ package com.mark.babylog
 
 import com.mark.babylog.data.BabyEvent
 import com.mark.babylog.data.EventType
-import org.junit.Assert.assertEquals
-import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
+import org.junit.Assert.assertEquals
+import org.junit.Test
 
-class DailyStatisticsTest{
-    private val day=LocalDate.of(2026,7,17)
-    private val zone=ZoneId.of("UTC")
-    private fun at(hour:Int,minute:Int=0)=day.atTime(hour,minute).atZone(zone).toInstant().toEpochMilli()
+class DailyStatisticsTest {
+    private val day = LocalDate.of(2026, 7, 17)
+    private val zone = ZoneId.of("UTC")
 
-    @Test fun eachCompletedMarkCountsAsOneFeeding(){
-        val events=listOf(
-            BabyEvent(1,EventType.FEEDING,"LEFT",at(8),at(8,12)),
-            BabyEvent(2,EventType.FEEDING,"RIGHT",at(8,12),at(8,22)),
-            BabyEvent(3,EventType.FEEDING,"BOTTLE:120",at(11),at(11)),
-            BabyEvent(4,EventType.FEEDING,"LEFT",at(14),at(14,20)),
-            BabyEvent(5,EventType.SLEEP,"LEFT",at(9),at(9)),
-            BabyEvent(6,EventType.SLEEP,"LEFT",at(12),at(12)),
-            BabyEvent(7,EventType.SLEEP,"RIGHT",at(15),at(15)),
-            BabyEvent(8,EventType.PUMPING,"LEFT:90",at(10),at(10)),
-            BabyEvent(9,EventType.PUMPING,"RIGHT:110",at(16),at(16))
-        )
+    private fun at(hour: Int, minute: Int = 0) =
+        day.atTime(hour, minute).atZone(zone).toInstant().toEpochMilli()
 
-        val result=dailySummary(events)
+    @Test
+    fun eachCompletedMarkCountsAsOneFeeding() {
+        val events =
+            listOf(
+                BabyEvent(1, EventType.FEEDING, "LEFT", at(8), at(8, 12)),
+                BabyEvent(2, EventType.FEEDING, "RIGHT", at(8, 12), at(8, 22)),
+                BabyEvent(3, EventType.FEEDING, "BOTTLE:120", at(11), at(11)),
+                BabyEvent(4, EventType.FEEDING, "LEFT", at(14), at(14, 20)),
+                BabyEvent(5, EventType.SLEEP, "LEFT", at(9), at(9)),
+                BabyEvent(6, EventType.SLEEP, "LEFT", at(12), at(12)),
+                BabyEvent(7, EventType.SLEEP, "RIGHT", at(15), at(15)),
+                BabyEvent(8, EventType.PUMPING, "LEFT:90", at(10), at(10)),
+                BabyEvent(9, EventType.PUMPING, "RIGHT:110", at(16), at(16)),
+            )
 
-        assertEquals(4,result.feedingCount)
-        assertEquals(120*60_000L,result.averageFeedingIntervalMs)
-        assertEquals(2,result.leftFeedingCount)
-        assertEquals(1,result.rightFeedingCount)
-        assertEquals(1,result.bottleCount)
-        assertEquals(120,result.bottleVolumeMl)
-        assertEquals(2,result.sleepLeftCount)
-        assertEquals(1,result.sleepRightCount)
-        assertEquals(2,result.pumpingCount)
-        assertEquals(200,result.pumpingVolumeMl)
+        val result = dailySummary(events)
+
+        assertEquals(4, result.feedingCount)
+        assertEquals(120 * 60_000L, result.averageFeedingIntervalMs)
+        assertEquals(2, result.leftFeedingCount)
+        assertEquals(1, result.rightFeedingCount)
+        assertEquals(1, result.bottleCount)
+        assertEquals(120, result.bottleVolumeMl)
+        assertEquals(2, result.sleepLeftCount)
+        assertEquals(1, result.sleepRightCount)
+        assertEquals(2, result.pumpingCount)
+        assertEquals(200, result.pumpingVolumeMl)
     }
 
-    @Test fun frequencyUsesTheTimeBetweenMarks(){
-        val result=dailySummary(listOf(
-            BabyEvent(1,EventType.FEEDING,"LEFT",at(8),at(8,10)),
-            BabyEvent(2,EventType.FEEDING,"RIGHT",at(8,41),at(8,51))
-        ))
+    @Test
+    fun frequencyUsesTheTimeBetweenMarks() {
+        val result =
+            dailySummary(
+                listOf(
+                    BabyEvent(1, EventType.FEEDING, "LEFT", at(8), at(8, 10)),
+                    BabyEvent(2, EventType.FEEDING, "RIGHT", at(8, 41), at(8, 51)),
+                )
+            )
 
-        assertEquals(2,result.feedingCount)
-        assertEquals(41*60_000L,result.averageFeedingIntervalMs)
+        assertEquals(2, result.feedingCount)
+        assertEquals(41 * 60_000L, result.averageFeedingIntervalMs)
     }
 }

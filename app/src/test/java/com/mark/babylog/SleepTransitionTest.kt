@@ -11,13 +11,26 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class SleepTransitionTest {
-    @Test fun feedingAndSleepMarksAreAllInstant() = runTest {
-        val db=Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(),BabyDatabase::class.java).allowMainThreadQueries().build()
-        val dao=db.events();dao.logFeeding(FeedingKind.LEFT,500);dao.startSleep(SleepPosition.LEFT,1_000);dao.startSleep(SleepPosition.RIGHT,2_000)
-        val events=dao.allForTest();val segments=dao.allSegmentsForTest()
-        assertEquals(3,events.size);assertTrue(segments.isEmpty())
-        assertEquals(500L,events[0].endedAt)
-        assertEquals(1_000L,events[1].endedAt);assertEquals(2_000L,events[2].endedAt)
+    @Test
+    fun feedingAndSleepMarksAreAllInstant() = runTest {
+        val db =
+            Room.inMemoryDatabaseBuilder(
+                    ApplicationProvider.getApplicationContext(),
+                    BabyDatabase::class.java,
+                )
+                .allowMainThreadQueries()
+                .build()
+        val dao = db.events()
+        dao.logFeeding(FeedingKind.LEFT, 500)
+        dao.startSleep(SleepPosition.LEFT, 1_000)
+        dao.startSleep(SleepPosition.RIGHT, 2_000)
+        val events = dao.allForTest()
+        val segments = dao.allSegmentsForTest()
+        assertEquals(3, events.size)
+        assertTrue(segments.isEmpty())
+        assertEquals(500L, events[0].endedAt)
+        assertEquals(1_000L, events[1].endedAt)
+        assertEquals(2_000L, events[2].endedAt)
         assertNull(dao.active())
         db.close()
     }

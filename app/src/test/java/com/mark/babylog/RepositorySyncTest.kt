@@ -12,54 +12,115 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
-class RepositorySyncTest{
-    private lateinit var db:BabyDatabase
-    private lateinit var repository:BabyLogRepository
-    @Before fun setup(){db=Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(),BabyDatabase::class.java).allowMainThreadQueries().build();repository=BabyLogRepository(db)}
-    @After fun close(){db.close()}
+class RepositorySyncTest {
+    private lateinit var db: BabyDatabase
+    private lateinit var repository: BabyLogRepository
 
-    @Test fun familyActionIsImmediateAndQueued()=runTest{
-        db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
-        repository.logFeeding(FeedingKind.LEFT,1_000)
-        val event=db.events().allForTest().single()
-        assertEquals("LEFT",event.detail);assertEquals("Мама",event.authorName);assertEquals(SyncState.PENDING,event.syncState)
-        assertEquals(1_000L,event.endedAt)
-        assertNull(db.events().active())
-        assertEquals("LOG_BOTTLE",db.events().pending().single().command)
+    @Before
+    fun setup() {
+        db =
+            Room.inMemoryDatabaseBuilder(
+                    ApplicationProvider.getApplicationContext(),
+                    BabyDatabase::class.java,
+                )
+                .allowMainThreadQueries()
+                .build()
+        repository = BabyLogRepository(db)
     }
 
-    @Test fun offlineWithoutFamilyStaysLocalAndHasNoOutbox()=runTest{
-        repository.startSleep(SleepPosition.RIGHT,2_000)
-        assertEquals(SyncState.LOCAL_ONLY,db.events().allForTest().single().syncState)
+    @After
+    fun close() {
+        db.close()
+    }
+
+    @Test
+    fun familyActionIsImmediateAndQueued() = runTest {
+        db.events()
+            .putMembership(
+                FamilyMembership(householdId = "family", memberId = "mama", displayName = "Мама")
+            )
+        repository.logFeeding(FeedingKind.LEFT, 1_000)
+        val event = db.events().allForTest().single()
+        assertEquals("LEFT", event.detail)
+        assertEquals("Мама", event.authorName)
+        assertEquals(SyncState.PENDING, event.syncState)
+        assertEquals(1_000L, event.endedAt)
+        assertNull(db.events().active())
+        assertEquals("LOG_BOTTLE", db.events().pending().single().command)
+    }
+
+    @Test
+    fun offlineWithoutFamilyStaysLocalAndHasNoOutbox() = runTest {
+        repository.startSleep(SleepPosition.RIGHT, 2_000)
+        assertEquals(SyncState.LOCAL_ONLY, db.events().allForTest().single().syncState)
         assertNull(db.events().active())
         assertTrue(db.events().pending().isEmpty())
     }
 
-    @Test fun familySleepMarkIsInstantAndQueuedAsLog()=runTest{
-        db.events().putMembership(FamilyMembership(householdId="family",memberId="papa",displayName="Папа"))
-        repository.startSleep(SleepPosition.LEFT,3_000)
-        assertEquals(3_000L,db.events().allForTest().single().endedAt)
-        assertEquals("LOG_SLEEP",db.events().pending().single().command)
+    @Test
+    fun existingLocalHistoryIsQueuedWhenFamilyIsAttached() = runTest {
+        repository.logFeeding(FeedingKind.RIGHT, 1_000)
+        repository.logPumping(FeedingKind.LEFT, 90, 2_000)
+        db.events()
+            .putMembership(
+                FamilyMembership(householdId = "family", memberId = "papa", displayName = "Папа")
+            )
+
+        repository.attachToFamily()
+
+        val events = db.events().allForTest()
+        assertTrue(events.all { it.householdId == "family" && it.syncState == SyncState.PENDING })
+        assertEquals(
+            setOf("LOG_BOTTLE", "LOG_PUMPING"),
+            db.events().pending().map { it.command }.toSet(),
+        )
     }
 
-    @Test fun bottleVolumeIsLoggedAsInstantCompletedFeeding()=runTest{
-        db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
-        repository.logBottle(120,61_000)
-        val event=db.events().allForTest().single()
-        assertEquals("BOTTLE:120",event.detail)
-        assertEquals(61_000L,event.startedAt)
-        assertEquals(61_000L,event.endedAt)
+    @Test
+    fun familySleepMarkIsInstantAndQueuedAsLog() = runTest {
+        db.events()
+            .putMembership(
+                FamilyMembership(householdId = "family", memberId = "papa", displayName = "Папа")
+            )
+        repository.startSleep(SleepPosition.LEFT, 3_000)
+        assertEquals(3_000L, db.events().allForTest().single().endedAt)
+        assertEquals("LOG_SLEEP", db.events().pending().single().command)
+    }
+
+    @Test
+    fun bottleVolumeIsLoggedAsInstantCompletedFeeding() = runTest {
+        db.events()
+            .putMembership(
+                FamilyMembership(householdId = "family", memberId = "mama", displayName = "Мама")
+            )
+        repository.logBottle(120, 61_000)
+        val event = db.events().allForTest().single()
+        assertEquals("BOTTLE:120", event.detail)
+        assertEquals(61_000L, event.startedAt)
+        assertEquals(61_000L, event.endedAt)
         assertNull(db.events().active())
-        assertEquals("LOG_BOTTLE",db.events().pending().single().command)
+        assertEquals("LOG_BOTTLE", db.events().pending().single().command)
     }
 
-    @Test fun legacyActiveFeedingIsClosedAtItsStartTime()=runTest{
-        db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
-        db.events().insert(BabyEvent(type=EventType.FEEDING,detail="RIGHT",startedAt=5_000,syncState=SyncState.SYNCED))
+    @Test
+    fun legacyActiveFeedingIsClosedAtItsStartTime() = runTest {
+        db.events()
+            .putMembership(
+                FamilyMembership(householdId = "family", memberId = "mama", displayName = "Мама")
+            )
+        db.events()
+            .insert(
+                BabyEvent(
+                    type = EventType.FEEDING,
+                    detail = "RIGHT",
+                    startedAt = 5_000,
+                    syncState = SyncState.SYNCED,
+                )
+            )
         repository.normalizeLegacyActiveFeeding(10_000)
-        val event=db.events().allForTest().single()
-        assertEquals(5_000L,event.endedAt)
+        val event = db.events().allForTest().single()
+        assertEquals(5_000L, event.endedAt)
         assertNull(db.events().active())
-        assertEquals(listOf("STOP","UPDATE"),db.events().pending().map{it.command})
+        assertEquals(listOf("STOP", "UPDATE"), db.events().pending().map { it.command })
     }
 }

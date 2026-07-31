@@ -31,8 +31,8 @@ private fun Paparazzi.notificationPreview(backgroundColor:Int){
         orientation=LinearLayout.VERTICAL
         setPadding(dp(12),dp(12),dp(12),dp(12))
         setBackgroundColor(backgroundColor)
-        addView(row("R · 50:00","L","R",false),LinearLayout.LayoutParams(-1,dp(56)).apply{bottomMargin=dp(10)})
-        addView(row("12:34","Стоп","R",true),LinearLayout.LayoutParams(-1,dp(56)))
+        addView(row("Последнее: R · 12:34","L","R",false),LinearLayout.LayoutParams(-1,dp(56)).apply{bottomMargin=dp(10)})
+        addView(row("Отметить кормление","L","R",false),LinearLayout.LayoutParams(-1,dp(56)))
         background=GradientDrawable().apply{
             color=android.content.res.ColorStateList.valueOf(backgroundColor)
             cornerRadius=dp(22).toFloat()

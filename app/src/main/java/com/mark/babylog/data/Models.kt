@@ -125,9 +125,8 @@ interface EventDao {
     @Query("SELECT * FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay AND deletedAt IS NULL LIMIT 1") suspend fun reminderCompletion(reminderId:String,epochDay:Long):ReminderCompletion?
     @Query("SELECT * FROM reminder_completions WHERE reminderId=:reminderId AND scheduledEpochDay=:epochDay LIMIT 1") suspend fun reminderCompletionIncludingDeleted(reminderId:String,epochDay:Long):ReminderCompletion?
 
-    @Transaction suspend fun startFeeding(kind:FeedingKind,time:Long,owner:FamilyMembership?=null):BabyEvent {
-        active()?.let{finish(it.id,time)}
-        val value=BabyEvent(type=EventType.FEEDING,detail=kind.name,startedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+    @Transaction suspend fun logFeeding(kind:FeedingKind,time:Long,owner:FamilyMembership?=null):BabyEvent {
+        val value=BabyEvent(type=EventType.FEEDING,detail=kind.name,startedAt=time,endedAt=time,householdId=owner?.householdId,authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
         return value.copy(id=insert(value))
     }
     @Transaction suspend fun startSleep(position:SleepPosition,time:Long,owner:FamilyMembership?=null):BabyEvent {

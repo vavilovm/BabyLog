@@ -7,7 +7,6 @@ import android.appwidget.AppWidgetManager
 import android.content.*
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.SystemClock
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
@@ -37,8 +36,7 @@ import kotlinx.coroutines.sync.withLock
 
 @SuppressLint("RestrictedApi","MissingPermission")
 object AppSurfaceSync {
-    private const val ACTIVE_TIMER_CHANNEL="active_timers_visible"
-    // A new channel id promotes the persistent quick-start notification out of the
+    // This channel id keeps the persistent quick-log notification out of the
     // easily hidden "silent/minimized" bucket for existing installs as well.
     private const val FEEDING_START_CHANNEL="feeding_starts_visible"
     private const val LEGACY_NOTIFICATION_ID=42
@@ -48,9 +46,8 @@ object AppSurfaceSync {
 
     suspend fun refresh(context:Context)=refreshMutex.withLock{
         runCatching{refreshWidgets(context)}
-        val active=(context.applicationContext as BabyLogApp).database.events().active()
         val lastFeed=(context.applicationContext as BabyLogApp).database.events().lastFeed()
-        runCatching{refreshNotification(context,active,lastFeed)}
+        runCatching{refreshNotification(context,lastFeed)}
     }
 
     suspend fun refreshFromWidget(context:Context,id:GlanceId,widget:GlanceAppWidget){
@@ -59,9 +56,8 @@ object AppSurfaceSync {
             supervisorScope {
                 launch { runCatching{refreshWidgets(context)} }
                 launch {
-                    val active=(context.applicationContext as BabyLogApp).database.events().active()
                     val lastFeed=(context.applicationContext as BabyLogApp).database.events().lastFeed()
-                    runCatching{refreshNotification(context,active,lastFeed)}
+                    runCatching{refreshNotification(context,lastFeed)}
                 }
             }
         }
@@ -88,48 +84,26 @@ object AppSurfaceSync {
         AppWidgetManager.getInstance(context).updateAppWidget((id as AppWidgetId).appWidgetId,views)
     }
 
-    private fun refreshNotification(context:Context,active:BabyEvent?,lastFeed:BabyEvent?){
+    private fun refreshNotification(context:Context,lastFeed:BabyEvent?){
         val manager=NotificationManagerCompat.from(context)
         manager.cancel(LEGACY_NOTIFICATION_ID)
+        manager.cancel(NOTIFICATION_ID)
         if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
-        if(active==null){
-            manager.cancel(NOTIFICATION_ID)
-            showFeedingStartNotification(context,manager,lastFeed)
-            return
-        }
-        manager.cancel(FEEDING_START_NOTIFICATION_ID)
-        createActiveTimerChannel(context)
-        val open=PendingIntent.getActivity(context,1,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val title=if(active.type==EventType.FEEDING)"Кормление · ${feedName(active.detail)}" else "Сон · ${sleepName(active.detail)}"
-        val compact=compactNotification(context,active)
-        val builder=NotificationCompat.Builder(context,ACTIVE_TIMER_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle(title).setContentText("Управление таймером доступно прямо здесь").setContentIntent(open).setWhen(active.startedAt).setUsesChronometer(true).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_DEFAULT).setCategory(NotificationCompat.CATEGORY_STOPWATCH).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
-        notificationActions(active).forEach{builder.addAction(0,it.label,action(context,it.command,it.request))}
-        manager.notify(NOTIFICATION_ID,builder.build())
-    }
-
-    private fun createActiveTimerChannel(context:Context){
-        if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(ACTIVE_TIMER_CHANNEL,"Активные таймеры",NotificationManager.IMPORTANCE_DEFAULT).apply{description="Текущее кормление или сон";setSound(null,null);enableVibration(false);setShowBadge(false);lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
+        showFeedingStartNotification(context,manager,lastFeed)
     }
 
     private fun showFeedingStartNotification(context:Context,manager:NotificationManagerCompat,lastFeed:BabyEvent?){
-        if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(FEEDING_START_CHANNEL,"Быстрый старт кормления",NotificationManager.IMPORTANCE_DEFAULT).apply{description="Быстрый старт кормления с экрана блокировки";setSound(null,null);enableVibration(false);setShowBadge(false);lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
+        if(Build.VERSION.SDK_INT>=26)(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(FEEDING_START_CHANNEL,"Быстрая отметка кормления",NotificationManager.IMPORTANCE_DEFAULT).apply{description="Отметка завершённого кормления с экрана блокировки";setSound(null,null);enableVibration(false);setShowBadge(false);lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
         val open=PendingIntent.getActivity(context,2,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val actions=feedingStartActions()
         val summary=lastFeedSummary(lastFeed)
         val compact=feedingStartCompactNotification(context,actions,lastFeed)
-        val builder=NotificationCompat.Builder(context,FEEDING_START_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle("Начать кормление").setContentText(summary?:"Выберите способ кормления").setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_DEFAULT).setCategory(NotificationCompat.CATEGORY_STATUS).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
+        val builder=NotificationCompat.Builder(context,FEEDING_START_CHANNEL).setSmallIcon(R.drawable.ic_stat_timer).setContentTitle("Отметить кормление").setContentText(summary?:"Одно нажатие — одна запись").setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_DEFAULT).setCategory(NotificationCompat.CATEGORY_STATUS).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCustomContentView(compact).setStyle(NotificationCompat.DecoratedCustomViewStyle())
         actions.forEach{builder.addAction(0,it.label,action(context,it.command,it.request))}
         manager.notify(FEEDING_START_NOTIFICATION_ID,builder.build())
     }
 
     private data class CompactAction(val label:String,val command:String,val request:Int)
-
-    private fun compactNotification(context:Context,active:BabyEvent)=RemoteViews(context.packageName,R.layout.notification_timer_compact).apply{
-        val elapsed=System.currentTimeMillis()-active.startedAt
-        setChronometer(R.id.notification_chronometer,SystemClock.elapsedRealtime()-elapsed,null,true)
-        setString(R.id.notification_chronometer,"setFormat",if(active.type==EventType.FEEDING)"%s" else "🌙 %s")
-        applyCompactActions(context,notificationActions(active))
-    }
 
     private fun RemoteViews.applyCompactActions(context:Context,actions:List<CompactAction>){
         listOf(R.id.notification_action_1,R.id.notification_action_2,R.id.notification_action_3).forEachIndexed{index,id->
@@ -141,24 +115,11 @@ object AppSurfaceSync {
 
     private fun feedingStartCompactNotification(context:Context,actions:List<CompactAction>,lastFeed:BabyEvent?)=RemoteViews(context.packageName,R.layout.notification_timer_compact).apply{
         if(lastFeed==null){
-            setTextViewText(R.id.notification_chronometer,"Начать кормление")
+            setTextViewText(R.id.notification_chronometer,"Отметить кормление")
         }else{
-            val elapsed=(System.currentTimeMillis()-(lastFeed.endedAt?:lastFeed.startedAt)).coerceAtLeast(0)
-            setChronometer(R.id.notification_chronometer,SystemClock.elapsedRealtime()-elapsed,null,true)
-            setString(R.id.notification_chronometer,"setFormat","${lastFeedCompactLabel(lastFeed)} · %s")
+            setTextViewText(R.id.notification_chronometer,"Последнее: ${lastFeedCompactLabel(lastFeed)} · ${clock(lastFeed.endedAt?:lastFeed.startedAt)}")
         }
         applyCompactActions(context,actions)
-    }
-
-    private fun notificationActions(active:BabyEvent):List<CompactAction>{
-        fun item(detail:String,label:String,command:String,request:Int)=CompactAction(if(active.detail==detail)"Стоп" else label,if(active.detail==detail)"STOP" else command,request)
-        return if(active.type==EventType.FEEDING)listOf(
-            item("LEFT","L","FEED_LEFT",11),
-            item("RIGHT","R","FEED_RIGHT",12)
-        )else listOf(
-            item("LEFT","Лево","SLEEP_LEFT",14),
-            item("RIGHT","Право","SLEEP_RIGHT",15)
-        )
     }
 
     private fun feedingStartActions()=listOf(
@@ -167,7 +128,8 @@ object AppSurfaceSync {
     )
 
     private fun lastFeedSummary(lastFeed:BabyEvent?,now:Long=System.currentTimeMillis()):String?=lastFeed?.let{
-        "${lastFeedCompactLabel(it)} · ${formatElapsed((now-(it.endedAt?:it.startedAt)).coerceAtLeast(0))} назад"
+        val elapsed=(now-(it.endedAt?:it.startedAt)).coerceAtLeast(0)
+        "${lastFeedCompactLabel(it)} · ${if(elapsed<60_000)"только что" else "${formatElapsed(elapsed)} назад"}"
     }
 
     private fun lastFeedCompactLabel(lastFeed:BabyEvent)=when(feedingKindOf(lastFeed.detail)){
@@ -185,11 +147,10 @@ object AppSurfaceSync {
         }
     }
 
+    private fun clock(time:Long)=java.text.SimpleDateFormat("HH:mm",java.util.Locale.getDefault()).format(java.util.Date(time))
     private fun action(context:Context,command:String,request:Int)=if(command=="FEED_BOTTLE")PendingIntent.getActivity(context,request,MainActivity.bottleIntent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)else PendingIntent.getBroadcast(context,request,Intent(context,TimerActionReceiver::class.java).putExtra("command",command),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    private fun feedName(v:String)=when(v){"LEFT"->"L";"RIGHT"->"R";else->"бутылочка"}
-    private fun sleepName(v:String)=when(v){"LEFT"->"голова слева";"RIGHT"->"голова справа";else->"другое"}
 }
 
-class TimerActionReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{val app=context.applicationContext as BabyLogApp;when(intent.getStringExtra("command")){"STOP"->app.repository.stop();"FEED_LEFT"->app.repository.startFeeding(FeedingKind.LEFT);"FEED_RIGHT"->app.repository.startFeeding(FeedingKind.RIGHT);"SLEEP_LEFT"->app.repository.startSleep(SleepPosition.LEFT);"SLEEP_RIGHT"->app.repository.startSleep(SleepPosition.RIGHT)};app.familySync.schedule();AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}
+class TimerActionReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{val app=context.applicationContext as BabyLogApp;when(intent.getStringExtra("command")){"STOP"->app.repository.stop();"FEED_LEFT"->app.repository.logFeeding(FeedingKind.LEFT);"FEED_RIGHT"->app.repository.logFeeding(FeedingKind.RIGHT);"SLEEP_LEFT"->app.repository.startSleep(SleepPosition.LEFT);"SLEEP_RIGHT"->app.repository.startSleep(SleepPosition.RIGHT)};app.familySync.schedule();AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}
 
 class BootReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){val pending=goAsync();CoroutineScope(SupervisorJob()+Dispatchers.IO).launch{try{ReminderScheduler.rescheduleAll(context);AppSurfaceSync.refresh(context)}finally{pending.finish()}}}}

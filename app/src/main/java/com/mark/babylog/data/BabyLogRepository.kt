@@ -11,15 +11,36 @@ class BabyLogRepository(private val db:BabyDatabase){
     val membership=dao.observeMembership()
     val pendingCount=dao.observePendingCount()
 
-    suspend fun startFeeding(kind:FeedingKind,time:Long=System.currentTimeMillis())=db.withTransaction{val owner=dao.membership();val event=dao.startFeeding(kind,time,owner);enqueue("START",event,time)}
+    suspend fun logFeeding(kind:FeedingKind,time:Long=System.currentTimeMillis())=db.withTransaction{
+        normalizeLegacyActiveFeedingInTransaction(time)
+        val owner=dao.membership()
+        val event=dao.logFeeding(kind,time,owner)
+        // The deployed backend already treats LOG_BOTTLE as a generic instant
+        // feeding log, regardless of whether detail is LEFT, RIGHT, or BOTTLE.
+        enqueue("LOG_BOTTLE",event,time)
+    }
     suspend fun startSleep(position:SleepPosition,time:Long=System.currentTimeMillis())=db.withTransaction{val owner=dao.membership();val event=dao.startSleep(position,time,owner);enqueue("LOG_SLEEP",event,time)}
     suspend fun logPumping(side:FeedingKind,volumeMl:Int,time:Long=System.currentTimeMillis())=db.withTransaction{val owner=dao.membership();val event=dao.logPumping(side,volumeMl,time,owner);enqueue("LOG_PUMPING",event,time)}
     suspend fun logBottle(volumeMl:Int,time:Long=System.currentTimeMillis())=db.withTransaction{val owner=dao.membership();val event=dao.logBottle(volumeMl,time,owner);enqueue("LOG_BOTTLE",event,time)}
     suspend fun stop(time:Long=System.currentTimeMillis())=db.withTransaction{dao.stopActive(time)?.let{enqueue("STOP",it,time)}}
-    suspend fun stopBottle(volumeMl:Int,time:Long=System.currentTimeMillis())=db.withTransaction{require(volumeMl>0);val stopped=dao.stopActive(time)?:return@withTransaction;require(feedingKindOf(stopped.detail)==FeedingKind.BOTTLE);val changed=stopped.copy(detail="BOTTLE:$volumeMl",updatedAt=time);dao.update(changed);enqueue("STOP",changed,time)}
     suspend fun changePosition(position:SleepPosition,time:Long=System.currentTimeMillis())=db.withTransaction{val active=dao.active()?:return@withTransaction;if(active.type!=EventType.SLEEP)return@withTransaction;dao.finishSegment(active.id,time);dao.insert(SleepSegment(eventId=active.id,position=position,startedAt=time,syncState=active.syncState));val changed=active.copy(detail=position.name,updatedAt=time,syncState=SyncState.PENDING);dao.update(changed);enqueue("UPDATE",changed,time)}
     suspend fun updateEvent(event:BabyEvent)=db.withTransaction{val owner=dao.membership();val changed=event.copy(updatedAt=System.currentTimeMillis(),authorId=owner?.memberId,authorName=owner?.displayName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING);dao.update(changed);enqueue("UPDATE",changed,changed.updatedAt)}
     suspend fun deleteEvent(event:BabyEvent)=db.withTransaction{val now=System.currentTimeMillis();val deleted=event.copy(deletedAt=now,updatedAt=now,syncState=SyncState.PENDING);dao.update(deleted);enqueue("DELETE",deleted,now)}
+
+    suspend fun normalizeLegacyActiveFeeding(time:Long=System.currentTimeMillis())=db.withTransaction{normalizeLegacyActiveFeedingInTransaction(time)}
+
+    private suspend fun normalizeLegacyActiveFeedingInTransaction(time:Long){
+        val legacy=dao.active()?:return
+        val owner=dao.membership()
+        val changed=legacy.copy(endedAt=legacy.startedAt,updatedAt=time+1,authorId=owner?.memberId?:legacy.authorId,authorName=owner?.displayName?:legacy.authorName,syncState=if(owner==null)SyncState.LOCAL_ONLY else SyncState.PENDING)
+        dao.update(changed)
+        if(owner!=null){
+            // STOP clears the old server-side active pointer; UPDATE then restores
+            // the intended zero-duration end time.
+            enqueue("STOP",legacy.copy(endedAt=time,updatedAt=time),time)
+            enqueue("UPDATE",changed,time+1)
+        }
+    }
 
     private suspend fun enqueue(command:String,event:BabyEvent,time:Long){if(dao.membership()==null)return;dao.put(SyncOperation(command=command,payload=eventJson(event).toString(),occurredAt=time))}
     private suspend fun eventJson(e:BabyEvent)=JSONObject().apply{put("remoteId",e.remoteId);put("type",e.type.name);put("detail",e.detail);put("startedAt",e.startedAt);put("endedAt",e.endedAt?:JSONObject.NULL);put("updatedAt",e.updatedAt);put("deletedAt",e.deletedAt?:JSONObject.NULL);put("authorId",e.authorId?:JSONObject.NULL);put("authorName",e.authorName?:JSONObject.NULL);put("segments",JSONArray(dao.segments(e.id).map{segment->JSONObject().apply{put("remoteId",segment.remoteId);put("position",segment.position.name);put("startedAt",segment.startedAt);put("endedAt",segment.endedAt?:JSONObject.NULL);put("updatedAt",segment.updatedAt)}}))}

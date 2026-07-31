@@ -20,10 +20,12 @@ class RepositorySyncTest{
 
     @Test fun familyActionIsImmediateAndQueued()=runTest{
         db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
-        repository.startFeeding(FeedingKind.LEFT,1_000)
-        val active=db.events().active()
-        assertEquals("LEFT",active?.detail);assertEquals("Мама",active?.authorName);assertEquals(SyncState.PENDING,active?.syncState)
-        assertEquals("START",db.events().pending().single().command)
+        repository.logFeeding(FeedingKind.LEFT,1_000)
+        val event=db.events().allForTest().single()
+        assertEquals("LEFT",event.detail);assertEquals("Мама",event.authorName);assertEquals(SyncState.PENDING,event.syncState)
+        assertEquals(1_000L,event.endedAt)
+        assertNull(db.events().active())
+        assertEquals("LOG_BOTTLE",db.events().pending().single().command)
     }
 
     @Test fun offlineWithoutFamilyStaysLocalAndHasNoOutbox()=runTest{
@@ -49,5 +51,15 @@ class RepositorySyncTest{
         assertEquals(61_000L,event.endedAt)
         assertNull(db.events().active())
         assertEquals("LOG_BOTTLE",db.events().pending().single().command)
+    }
+
+    @Test fun legacyActiveFeedingIsClosedAtItsStartTime()=runTest{
+        db.events().putMembership(FamilyMembership(householdId="family",memberId="mama",displayName="Мама"))
+        db.events().insert(BabyEvent(type=EventType.FEEDING,detail="RIGHT",startedAt=5_000,syncState=SyncState.SYNCED))
+        repository.normalizeLegacyActiveFeeding(10_000)
+        val event=db.events().allForTest().single()
+        assertEquals(5_000L,event.endedAt)
+        assertNull(db.events().active())
+        assertEquals(listOf("STOP","UPDATE"),db.events().pending().map{it.command})
     }
 }

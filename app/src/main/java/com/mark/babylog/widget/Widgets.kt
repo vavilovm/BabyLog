@@ -71,9 +71,9 @@ private suspend fun sleepSurfaceUi(context: Context): WidgetUi {
     val zone = java.time.ZoneId.systemDefault()
     val start = java.time.LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
     val records = d.sleepSnapshot(start)
-    val ui = sleepWidgetUi(active ?: d.lastSleep(), now).copy(
-        summary = dailySleepSummary(records, start, now)
-    )
+    val ui =
+        sleepWidgetUi(active ?: d.lastSleep(), now)
+            .copy(summary = dailySleepSummary(records, start, now))
     if (active != null) return ui
     val next =
         com.mark.babylog.sleep.SleepPredictor.calculate(
@@ -125,6 +125,7 @@ class SleepAction : ActionCallback {
 
 class FeedingWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Exact
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val ui = sleepSurfaceUi(context)
         provideContent { SleepCard(ui, showSummary = true) }
@@ -137,6 +138,7 @@ class FeedingWidgetReceiver : GlanceAppWidgetReceiver() {
 
 class SleepWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Exact
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val ui = sleepSurfaceUi(context)
         provideContent { SleepCard(ui, showSummary = false) }
@@ -180,24 +182,36 @@ private val actionInk = ColorProvider(Color.White, Color(0xFF123C30))
 private fun SleepCard(ui: WidgetUi, showSummary: Boolean) {
     val height = LocalSize.current.height
     Column(
-        GlanceModifier.fillMaxSize().appWidgetBackground()
-            .background(cardColor).cornerRadius(24.dp)
-            .clickable(actionStartActivity<MainActivity>()).padding(16.dp)
+        GlanceModifier.fillMaxSize()
+            .appWidgetBackground()
+            .background(cardColor)
+            .cornerRadius(24.dp)
+            .clickable(actionStartActivity<MainActivity>())
+            .padding(16.dp)
     ) {
         Caption(if (showSummary) "BABYLOG · СЕГОДНЯ" else "BABYLOG · СОН")
         Spacer(GlanceModifier.height(8.dp))
-        Text(ui.status, style = TextStyle(color = inkColor, fontWeight = FontWeight.Bold,
-            fontSize = 20.sp), maxLines = 2)
+        Text(
+            ui.status,
+            style = TextStyle(color = inkColor, fontWeight = FontWeight.Bold, fontSize = 20.sp),
+            maxLines = 2,
+        )
         if (height >= 180.dp) {
             Spacer(GlanceModifier.height(8.dp))
-            Caption(ui.prediction ?: if (ui.buttons.first().command == "WAKE")
-                "Тихого сна малышу" else "Новый сон — одним касанием")
+            Caption(
+                ui.prediction
+                    ?: if (ui.buttons.first().command == "WAKE") "Тихого сна малышу"
+                    else "Новый сон — одним касанием"
+            )
         }
         if (showSummary && height >= 240.dp) {
             Spacer(GlanceModifier.height(16.dp))
             Caption("СОН ЗА СЕГОДНЯ")
-            Text(ui.summary ?: "Пока нет записей", style = TextStyle(
-                color = inkColor, fontSize = 18.sp, fontWeight = FontWeight.Bold), maxLines = 2)
+            Text(
+                ui.summary ?: "Пока нет записей",
+                style = TextStyle(color = inkColor, fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                maxLines = 2,
+            )
         }
         Spacer(GlanceModifier.defaultWeight())
         SleepButton(ui.buttons.first(), GlanceModifier.fillMaxWidth())
@@ -207,14 +221,21 @@ private fun SleepCard(ui: WidgetUi, showSummary: Boolean) {
 @Composable
 private fun SleepStrip(ui: WidgetUi) {
     Row(
-        GlanceModifier.fillMaxSize().appWidgetBackground().background(cardColor)
-            .cornerRadius(24.dp).clickable(actionStartActivity<MainActivity>()).padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+        GlanceModifier.fillMaxSize()
+            .appWidgetBackground()
+            .background(cardColor)
+            .cornerRadius(24.dp)
+            .clickable(actionStartActivity<MainActivity>())
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(GlanceModifier.defaultWeight()) {
             Caption("BABYLOG · СОН")
-            Text(ui.status, style = TextStyle(color = inkColor, fontSize = 14.sp,
-                fontWeight = FontWeight.Bold), maxLines = 2)
+            Text(
+                ui.status,
+                style = TextStyle(color = inkColor, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                maxLines = 2,
+            )
         }
         Spacer(GlanceModifier.width(10.dp))
         SleepButton(ui.buttons.first(), GlanceModifier.width(112.dp))
@@ -226,16 +247,30 @@ private fun SleepSquare(ui: WidgetUi) {
     val item = ui.buttons.first()
     // The entire 1 × 1 tile is the action; no padded button inside another box.
     Column(
-        GlanceModifier.fillMaxSize().appWidgetBackground().background(accentColor)
-            .cornerRadius(24.dp).clickable(actionRunCallback<SleepAction>(
-                actionParametersOf(kindKey to item.command))).padding(8.dp),
+        GlanceModifier.fillMaxSize()
+            .appWidgetBackground()
+            .background(accentColor)
+            .cornerRadius(24.dp)
+            .clickable(actionRunCallback<SleepAction>(actionParametersOf(kindKey to item.command)))
+            .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(if (item.command == "WAKE") "☀" else "☾",
-            style = TextStyle(color = actionInk, fontSize = 24.sp))
-        Text(item.label, style = TextStyle(color = actionInk, fontWeight = FontWeight.Bold,
-            fontSize = 12.sp, textAlign = TextAlign.Center), maxLines = 2)
+        Text(
+            if (item.command == "WAKE") "☀" else "☾",
+            style = TextStyle(color = actionInk, fontSize = 24.sp),
+        )
+        Text(
+            item.label,
+            style =
+                TextStyle(
+                    color = actionInk,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                ),
+            maxLines = 2,
+        )
     }
 }
 
@@ -246,24 +281,43 @@ private fun Caption(value: String) {
 
 @Composable
 private fun SleepButton(item: WidgetButton, modifier: GlanceModifier) {
-    Box(modifier.height(48.dp).background(accentColor).cornerRadius(16.dp)
-        .clickable(actionRunCallback<SleepAction>(actionParametersOf(kindKey to item.command))),
-        contentAlignment = Alignment.Center) {
-        Text(item.label, style = TextStyle(color = actionInk, fontSize = 14.sp,
-            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center), maxLines = 2)
+    Box(
+        modifier
+            .height(48.dp)
+            .background(accentColor)
+            .cornerRadius(16.dp)
+            .clickable(actionRunCallback<SleepAction>(actionParametersOf(kindKey to item.command))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            item.label,
+            style =
+                TextStyle(
+                    color = actionInk,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                ),
+            maxLines = 2,
+        )
     }
 }
 
 internal fun dailySleepSummary(records: List<BabyEvent>, start: Long, now: Long): String {
-    val valid = records.filter {
-        it.type == EventType.SLEEP && it.sleepRecordVersion == 1 &&
-            it.deletedAt == null && it.syncState != SyncState.CONFLICT &&
-            it.startedAt < now && (it.endedAt ?: now) > start
-    }
-    val minutes = valid.sumOf {
-        ((it.endedAt ?: now).coerceAtMost(now) - it.startedAt.coerceAtLeast(start))
-            .coerceAtLeast(0)
-    } / 60_000
+    val valid =
+        records.filter {
+            it.type == EventType.SLEEP &&
+                it.sleepRecordVersion == 1 &&
+                it.deletedAt == null &&
+                it.syncState != SyncState.CONFLICT &&
+                it.startedAt < now &&
+                (it.endedAt ?: now) > start
+        }
+    val minutes =
+        valid.sumOf {
+            ((it.endedAt ?: now).coerceAtMost(now) - it.startedAt.coerceAtLeast(start))
+                .coerceAtLeast(0)
+        } / 60_000
     return if (valid.isEmpty()) "Пока нет записей"
     else "${minutes / 60} ч ${minutes % 60} мин · эпизодов: ${valid.size}"
 }

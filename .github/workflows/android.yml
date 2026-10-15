@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: babylog-${{ github.workflow }}-${{ github.ref }}
+  group: babylog-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -29,6 +29,8 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
+      - name: Check release versioning
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Check Android code
         run: ./gradlew spotlessCheck testDebugUnitTest lintDebug
       - name: Build debug APK
@@ -65,7 +67,7 @@ jobs:
       - run: npm test
 
   release:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: [android-quality, functions-quality]
     runs-on: ubuntu-latest
     permissions:
@@ -89,12 +91,22 @@ jobs:
           mkdir -p keystore
           printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > app/google-services.json
           printf '%s' "$BABYLOG_KEYSTORE_BASE64" | base64 --decode > keystore/babylog-release.jks
+      - name: Reserve release version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prepare-release.py
       - name: Build signed release APK
         env:
           BABYLOG_STORE_FILE: keystore/babylog-release.jks
           BABYLOG_STORE_PASSWORD: ${{ secrets.BABYLOG_STORE_PASSWORD }}
           BABYLOG_KEY_PASSWORD: ${{ secrets.BABYLOG_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease -PreleaseVersionName=${{ steps.version.outputs.name }} -PreleaseVersionCode=${{ steps.version.outputs.code }}
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: BabyLog ${{ steps.version.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
           files: app/build/outputs/apk/release/app-release.apk

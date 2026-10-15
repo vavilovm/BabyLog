@@ -33,6 +33,17 @@ private val dateFormat = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
 private fun clock(t: Long, zone: ZoneId) = Instant.ofEpochMilli(t).atZone(zone).format(clockFormat)
 
+private fun wakeClock(time: Long, now: Long, zone: ZoneId): String {
+    val date = Instant.ofEpochMilli(time).atZone(zone).toLocalDate()
+    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    return clock(time, zone) +
+        when (date) {
+            today -> ""
+            today.plusDays(1) -> " завтра"
+            else -> " ${date.format(DateTimeFormatter.ofPattern("dd.MM"))}"
+        }
+}
+
 private fun duration(ms: Long): String {
     val m = (ms.coerceAtLeast(0) / 60_000)
     return if (m >= 60) "${m / 60} ч ${m % 60} мин" else "$m мин"
@@ -120,7 +131,7 @@ fun SleepScreen(
                     { editing = it },
                 )
             }
-            item { NextSleepCard(prediction.next, active != null, now, zone) }
+            item { NextSleepCard(prediction.next, active != null, now, zone, prediction.current) }
 
             if (prediction.conflicts.isNotEmpty())
                 item {
@@ -610,13 +621,61 @@ internal fun SleepStatusCard(
 }
 
 @Composable
-internal fun NextSleepCard(estimate: SleepEstimate?, sleeping: Boolean, now: Long, zone: ZoneId) {
+internal fun NextSleepCard(
+    estimate: SleepEstimate?,
+    sleeping: Boolean,
+    now: Long,
+    zone: ZoneId,
+    current: CurrentSleepEstimate? = null,
+) {
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Следующий сон", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (sleeping) "Прогноз текущего сна" else "Следующий сон",
+                style = MaterialTheme.typography.titleMedium,
+            )
             val next = estimate
-            if (sleeping) Text("Вернёмся к прогнозу после пробуждения")
-            else if (next == null) {
+            if (sleeping) {
+                if (current == null) {
+                    Text(
+                        "Изучаем продолжительность сна",
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+                    Text(
+                        "Для оценки нужен хотя бы один завершённый сон того же типа. Дневные и ночные записи оцениваем отдельно."
+                    )
+                } else {
+                    Text(
+                        if (current.night) "Ночной сон" else "Дневной сон",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        "Около ${duration(current.expectedWake - current.startedAt)} всего",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "Пробуждение примерно ${wakeClock(current.earliestWake, now, zone)} – ${wakeClock(current.latestWake, now, zone)}"
+                    )
+                    Text("Ориентир: ${wakeClock(current.expectedWake, now, zone)}")
+                    if (now < current.expectedWake) {
+                        Text("Осталось примерно ${duration(current.expectedWake - now)}")
+                    } else {
+                        Text(
+                            "Спит дольше обычного ориентира — точное время пробуждения пока неизвестно."
+                        )
+                    }
+                    Text(
+                        "Предварительная оценка · похожих записей: ${current.samples}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (current.night)
+                        Text(
+                            "До следующего записанного пробуждения; ночные пробуждения могут разделять ночь на несколько снов.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                }
+            } else if (next == null) {
                 Text("Изучаем её ритм", style = MaterialTheme.typography.headlineSmall)
                 Text(
                     "Записывайте начало и конец сна. Для первого прогноза нужен завершённый период бодрствования между двумя снами. После долгого перерыва проверьте пропущенные записи."

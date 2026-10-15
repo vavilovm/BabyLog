@@ -101,6 +101,25 @@ class SleepChartScreenshotTest {
             BabyTheme { SleepStatusCard(null, now - 125_000, now, zone, {}, {}, {}) }
         }
 
+    @Test
+    fun ongoingNight_durationEstimate() =
+        paparazzi.snapshot {
+            BabyTheme {
+                val start =
+                    LocalDate.of(2026, 10, 15).atTime(21, 0).atZone(zone).toInstant().toEpochMilli()
+                val current =
+                    CurrentSleepEstimate(
+                        start,
+                        start + 6 * 3_600_000L,
+                        start + 8 * 3_600_000L,
+                        start + 10 * 3_600_000L,
+                        5,
+                        true,
+                    )
+                NextSleepCard(null, true, start + 3_600_000L, zone, current)
+            }
+        }
+
     @Test fun weeklySleep_chartAndTotals() = paparazzi.snapshot { BabyTheme { Chart(7) } }
 
     @Test

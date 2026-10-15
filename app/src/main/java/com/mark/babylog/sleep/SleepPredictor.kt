@@ -20,10 +20,20 @@ data class SleepEstimate(
 
 data class ForecastSleep(val start: Long, val end: Long, val uncertaintyMinutes: Int)
 
+data class CurrentSleepEstimate(
+    val startedAt: Long,
+    val earliestWake: Long,
+    val expectedWake: Long,
+    val latestWake: Long,
+    val samples: Int,
+    val night: Boolean,
+)
+
 data class SleepPrediction(
     val next: SleepEstimate?,
     val forecast: List<ForecastSleep>,
     val conflicts: Set<String>,
+    val current: CurrentSleepEstimate? = null,
 )
 
 /** Pure, deterministic model. Every backtest fits exclusively on preceding observations. */
@@ -154,6 +164,58 @@ object SleepPredictor {
         return (median + x.indices.sumOf { x[it] * a[it][size] }).coerceIn(5.0, 480.0)
     }
 
+    private fun isNight(start: Long, zone: ZoneId): Boolean =
+        Instant.ofEpochMilli(start).atZone(zone).hour.let { it >= 18 || it < 5 }
+
+    private fun currentSleep(
+        active: BabyEvent,
+        completed: List<BabyEvent>,
+        zone: ZoneId,
+    ): CurrentSleepEstimate? {
+        val night = isNight(active.startedAt, zone)
+        val hour = Instant.ofEpochMilli(active.startedAt).atZone(zone).toLocalTime()
+        val angle = (hour.hour + hour.minute / 60.0) * PI / 12
+        val durations =
+            completed
+                .filter {
+                    it.endedAt!! <= active.startedAt &&
+                        it.startedAt >= active.startedAt - 28 * DAY &&
+                        isNight(it.startedAt, zone) == night
+                }
+                .map {
+                    val time = Instant.ofEpochMilli(it.startedAt).atZone(zone).toLocalTime()
+                    val otherAngle = (time.hour + time.minute / 60.0) * PI / 12
+                    val recency =
+                        exp(-ln(2.0) * (active.startedAt - it.startedAt).toDouble() / (7 * DAY))
+                    val similarity = exp(2.0 * (cos(angle - otherAngle) - 1))
+                    (it.endedAt!! - it.startedAt).toDouble() / MINUTE to recency * similarity
+                }
+        if (durations.isEmpty()) return null
+        fun quantile(fraction: Double): Double {
+            var accumulated = 0.0
+            val threshold = durations.sumOf { it.second } * fraction
+            return durations
+                .sortedBy { it.first }
+                .first {
+                    accumulated += it.second
+                    accumulated >= threshold
+                }
+                .first
+        }
+        val expected = weightedMedian(durations)
+        // Descriptive personal spread, deliberately broad; not a calibrated confidence interval.
+        val margin = max(if (night) 60.0 else 15.0, expected * 0.3)
+        return CurrentSleepEstimate(
+            active.startedAt,
+            active.startedAt +
+                (min(quantile(0.2), expected - margin).coerceAtLeast(0.0) * MINUTE).toLong(),
+            active.startedAt + (expected * MINUTE).toLong(),
+            active.startedAt + (max(quantile(0.8), expected + margin) * MINUTE).toLong(),
+            durations.size,
+            night,
+        )
+    }
+
     fun calculate(
         events: List<BabyEvent>,
         now: Long,
@@ -174,8 +236,16 @@ object SleepPredictor {
                 .map { it.remoteId }
                 .toSet()
         val completed = sessions.filter { it.endedAt != null }
-        if (sessions.any { it.endedAt == null })
-            return SleepPrediction(null, emptyList(), conflicts)
+        sessions
+            .firstOrNull { it.endedAt == null }
+            ?.let { active ->
+                return SleepPrediction(
+                    null,
+                    emptyList(),
+                    conflicts,
+                    currentSleep(active, completed, zone),
+                )
+            }
         val latest = completed.lastOrNull() ?: return SleepPrediction(null, emptyList(), conflicts)
         val samples =
             completed.zipWithNext().mapNotNull { (prior, next) ->

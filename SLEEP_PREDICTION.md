@@ -58,6 +58,23 @@ sleep problems. It does not use an LLM or send sleep records to an AI service.
   sleeps. These are tentative projections rather than separately calibrated
   whole-day prediction intervals.
 
+## Ongoing sleep duration
+
+While a sleep is active, estimate its total recorded duration and a wake-up window
+from completed, valid sessions in the 28 days before its start. Separate night
+starts (18:00–04:59 local time) from daytime starts. Use a weighted median with a
+seven-day recency half-life and circular time-of-day similarity. One matching
+session is enough for a clearly preliminary estimate; no matching history means
+no invented duration. The active session never trains its own estimate.
+
+The descriptive window spans weighted 20th–80th percentiles and is widened to at
+least ±30%, with a minimum half-width of 15 minutes for naps or 60 minutes for
+night sleep. It is not a calibrated probability interval. Keep the estimate
+anchored to sleep onset when the clock advances; if it passes, explain that sleep
+has exceeded the rough estimate. Night estimates refer to the next recorded wake,
+not the total of multiple sleeps interrupted by night wakings. All elapsed
+durations use timestamps, including across daylight-saving changes.
+
 ## Compatibility and rollout
 
 Deploy the functions and Firestore rules **before distributing the updated APK**:

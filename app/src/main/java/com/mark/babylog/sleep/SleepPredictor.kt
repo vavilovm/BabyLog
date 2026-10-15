@@ -175,7 +175,7 @@ object SleepPredictor {
         val night = isNight(active.startedAt, zone)
         val hour = Instant.ofEpochMilli(active.startedAt).atZone(zone).toLocalTime()
         val angle = (hour.hour + hour.minute / 60.0) * PI / 12
-        val durations =
+        val candidates =
             completed
                 .filter {
                     it.endedAt!! <= active.startedAt &&
@@ -190,7 +190,12 @@ object SleepPredictor {
                     val similarity = exp(2.0 * (cos(angle - otherAngle) - 1))
                     (it.endedAt!! - it.startedAt).toDouble() / MINUTE to recency * similarity
                 }
-        if (durations.isEmpty()) return null
+        if (candidates.isEmpty()) return null
+        // Night waking episodes and consolidated overnight sleeps form different duration modes.
+        // Use the mode containing the personal weighted median rather than spanning both modes.
+        val baseline = weightedMedian(candidates)
+        val durations =
+            if (night) candidates.filter { (it.first >= 180) == (baseline >= 180) } else candidates
         fun quantile(fraction: Double): Double {
             var accumulated = 0.0
             val threshold = durations.sumOf { it.second } * fraction
@@ -203,8 +208,8 @@ object SleepPredictor {
                 .first
         }
         val expected = weightedMedian(durations)
-        // Descriptive personal spread, deliberately broad; not a calibrated confidence interval.
-        val margin = max(if (night) 60.0 else 15.0, expected * 0.3)
+        // Typical personal spread, not a calibrated confidence interval.
+        val margin = if (night) 30.0 else 10.0
         return CurrentSleepEstimate(
             active.startedAt,
             active.startedAt +
@@ -239,12 +244,20 @@ object SleepPredictor {
         sessions
             .firstOrNull { it.endedAt == null }
             ?.let { active ->
-                return SleepPrediction(
-                    null,
-                    emptyList(),
-                    conflicts,
-                    currentSleep(active, completed, zone),
-                )
+                val current = currentSleep(active, completed, zone)
+                val projection =
+                    current
+                        ?.takeIf { it.expectedWake > now }
+                        ?.let {
+                            listOf(
+                                ForecastSleep(
+                                    now,
+                                    it.expectedWake,
+                                    ((it.latestWake - it.earliestWake) / (2 * MINUTE)).toInt(),
+                                )
+                            )
+                        } ?: emptyList()
+                return SleepPrediction(null, projection, conflicts, current)
             }
         val latest = completed.lastOrNull() ?: return SleepPrediction(null, emptyList(), conflicts)
         val samples =

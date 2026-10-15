@@ -67,13 +67,23 @@ seven-day recency half-life and circular time-of-day similarity. One matching
 session is enough for a clearly preliminary estimate; no matching history means
 no invented duration. The active session never trains its own estimate.
 
-The descriptive window spans weighted 20th–80th percentiles and is widened to at
-least ±30%, with a minimum half-width of 15 minutes for naps or 60 minutes for
-night sleep. It is not a calibrated probability interval. Keep the estimate
-anchored to sleep onset when the clock advances; if it passes, explain that sleep
-has exceeded the rough estimate. Night estimates refer to the next recorded wake,
-not the total of multiple sleeps interrupted by night wakings. All elapsed
-durations use timestamps, including across daylight-saving changes.
+For night sleeps, separate short episodes (under three hours) from longer sleeps,
+using the group containing the personal weighted median. This avoids a window
+spanning brief night wakings and consolidated overnight sleep. The descriptive
+window uses weighted 20th–80th percentiles, with a minimum half-width of 10 minutes
+for naps and 30 minutes for nights; no proportional padding is added. This is a
+typical-history range, not a calibrated probability interval. If its width exceeds
+four hours for nights or two hours for naps, the UI explains that duration varies
+instead of displaying an unhelpfully broad window. Central wake times are rounded
+to five minutes.
+
+Keep the estimate anchored to sleep onset when the clock advances; if it passes,
+explain that sleep has exceeded the rough estimate. Night estimates refer to the
+next recorded wake, not the total of multiple sleeps interrupted by night wakings.
+All elapsed durations use timestamps, including across daylight-saving changes.
+The graph draws the remaining projected sleep from now to the estimated wake
+using the forecast style and appends tomorrow when a projection overlaps that day.
+No future sleep is counted in recorded totals.
 
 ## Compatibility and rollout
 

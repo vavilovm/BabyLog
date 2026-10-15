@@ -141,6 +141,39 @@ class SleepPredictorTest {
     }
 
     @Test
+    fun overnightWindowDoesNotSpanShortNightEpisodesOrAddThirtyPercent() {
+        val start = base + 10 * 86_400_000L + 14 * 60 * minute
+        val active = session(start).copy(endedAt = null)
+        val nights = (1..5).map { session(start - it * 86_400_000L, 660) }
+        val short = (6..7).map { session(start - it * 86_400_000L, 30) }
+        val now = start + 60 * minute
+        val result = SleepPredictor.calculate(nights + short + active, now, zone)
+        val estimate = result.current!!
+        assertEquals(start + 660 * minute, estimate.expectedWake)
+        assertEquals(60 * minute, estimate.latestWake - estimate.earliestWake)
+        assertEquals(5, estimate.samples)
+        assertEquals(now, result.forecast.single().start)
+        assertEquals(estimate.expectedWake, result.forecast.single().end)
+        assertTrue(
+            SleepPredictor.calculate(nights + short + active, start + 720 * minute, zone)
+                .forecast
+                .isEmpty()
+        )
+    }
+
+    @Test
+    fun shortNightEpisodesKeepTheirOwnDurationMode() {
+        val start = base + 10 * 86_400_000L + 14 * 60 * minute
+        val active = session(start).copy(endedAt = null)
+        val short = (1..5).map { session(start - it * 86_400_000L, 45) }
+        val long = session(start - 6 * 86_400_000L, 660)
+        assertEquals(
+            start + 45 * minute,
+            SleepPredictor.calculate(short + long + active, start, zone).current!!.expectedWake,
+        )
+    }
+
+    @Test
     fun durationEstimateNeedsMatchingRecentValidHistory() {
         val start = base + 40 * 86_400_000L
         val active = session(start).copy(endedAt = null)

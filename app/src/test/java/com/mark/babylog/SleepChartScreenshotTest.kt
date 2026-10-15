@@ -120,6 +120,34 @@ class SleepChartScreenshotTest {
             }
         }
 
+    @Test
+    fun ongoingNight_projectsIntoTomorrow() =
+        paparazzi.snapshot {
+            BabyTheme {
+                val start =
+                    LocalDate.of(2026, 10, 15).atTime(21, 0).atZone(zone).toInstant().toEpochMilli()
+                val active =
+                    BabyEvent(
+                        type = EventType.SLEEP,
+                        detail = "BACK",
+                        startedAt = start,
+                        sleepRecordVersion = 1,
+                    )
+                Surface {
+                    Column(Modifier.padding(16.dp)) {
+                        SleepChart(
+                            listOf(active),
+                            listOf(ForecastSleep(start + 3_600_000L, start + 11 * 3_600_000L, 30)),
+                            start + 3_600_000L,
+                            zone,
+                            7,
+                            {},
+                        )
+                    }
+                }
+            }
+        }
+
     @Test fun weeklySleep_chartAndTotals() = paparazzi.snapshot { BabyTheme { Chart(7) } }
 
     @Test

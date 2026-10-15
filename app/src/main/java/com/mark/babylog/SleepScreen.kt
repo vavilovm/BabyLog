@@ -167,17 +167,14 @@ fun SleepScreen(
                 )
             }
             item { SleepTotals(sessions, now, zone) }
-            if (prediction.forecast.isNotEmpty())
+            if (prediction.forecast.isNotEmpty() && active == null)
                 item {
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Column(
                             Modifier.padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(
-                                "Ориентир на сегодня",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
+                            Text("Ориентир сна", style = MaterialTheme.typography.titleMedium)
                             prediction.forecast.forEach { f ->
                                 Text(
                                     "${if (f.end - f.start >= 3 * 3_600_000) "Ночной сон" else "Сон"}: ${clock(f.start, zone)} – ${clock(f.end, zone)} · ±${f.uncertaintyMinutes} мин"
@@ -411,6 +408,26 @@ internal fun SleepEntryDialog(
     )
 }
 
+internal fun sleepChartDays(
+    forecast: List<ForecastSleep>,
+    now: Long,
+    zone: ZoneId,
+    days: Int,
+): List<LocalDate> {
+    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val tomorrow = today.plusDays(1)
+    val tomorrowStart = tomorrow.atStartOfDay(zone).toInstant().toEpochMilli()
+    val history = (days - 1 downTo 0).map { today.minusDays(it.toLong()) }
+    return if (
+        forecast.any {
+            it.start < tomorrow.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() &&
+                it.end > tomorrowStart
+        }
+    )
+        history + tomorrow
+    else history
+}
+
 @Composable
 internal fun SleepChart(
     events: List<BabyEvent>,
@@ -431,8 +448,7 @@ internal fun SleepChart(
                 Text(it, style = MaterialTheme.typography.labelSmall)
             }
         }
-        repeat(days) { index ->
-            val day = today.minusDays((days - index - 1).toLong())
+        sleepChartDays(forecast, now, zone, days).forEach { day ->
             val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
             val end = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
             // Wall-clock coordinates align the same hour across days, even on DST transitions.
@@ -654,10 +670,19 @@ internal fun NextSleepCard(
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                     )
+                    if (
+                        current.latestWake - current.earliestWake <=
+                            (if (current.night) 4 else 2) * 3_600_000L
+                    ) {
+                        Text(
+                            "Обычное окно: ${wakeClock(current.earliestWake, now, zone)} – ${wakeClock(current.latestWake, now, zone)}"
+                        )
+                    } else {
+                        Text("Продолжительность сильно меняется — узкого окна пока нет.")
+                    }
                     Text(
-                        "Пробуждение примерно ${wakeClock(current.earliestWake, now, zone)} – ${wakeClock(current.latestWake, now, zone)}"
+                        "Ориентир: ${wakeClock(current.expectedWake / 300_000 * 300_000, now, zone)}"
                     )
-                    Text("Ориентир: ${wakeClock(current.expectedWake, now, zone)}")
                     if (now < current.expectedWake) {
                         Text("Осталось примерно ${duration(current.expectedWake - now)}")
                     } else {

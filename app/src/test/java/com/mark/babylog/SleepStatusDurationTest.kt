@@ -1,5 +1,7 @@
 package com.mark.babylog
 
+import com.mark.babylog.sleep.ForecastSleep
+import java.time.*
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -18,5 +20,20 @@ class SleepStatusDurationTest {
     fun showsHoursAndMinutesFromOneHour() {
         assertEquals("1 ч 0 мин", sleepStatusDuration(3_600_000))
         assertEquals("2 ч 3 мин", sleepStatusDuration(7_380_000))
+    }
+
+    @Test
+    fun chartAppendsTomorrowOnlyWhenForecastOverlapsIt() {
+        val zone = ZoneId.of("Europe/Amsterdam")
+        val today = LocalDate.of(2026, 10, 15)
+        val now = today.atTime(21, 0).atZone(zone).toInstant().toEpochMilli()
+        val midnight = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        assertEquals(7, sleepChartDays(emptyList(), now, zone, 7).size)
+        assertEquals(7, sleepChartDays(listOf(ForecastSleep(now, midnight, 30)), now, zone, 7).size)
+        val days =
+            sleepChartDays(listOf(ForecastSleep(now, midnight + 8 * 3_600_000L, 30)), now, zone, 7)
+        assertEquals(8, days.size)
+        assertEquals(today.minusDays(6), days.first())
+        assertEquals(today.plusDays(1), days.last())
     }
 }

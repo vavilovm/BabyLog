@@ -26,6 +26,9 @@ jobs:
           java-version: '17'
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
       - name: Check Android code
         run: ./gradlew spotlessCheck testDebugUnitTest lintDebug
       - name: Build debug APK
@@ -75,6 +78,9 @@ jobs:
           java-version: '17'
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
       - name: Restore release configuration
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}

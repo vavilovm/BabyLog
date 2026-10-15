@@ -12,3 +12,6 @@ functions/node_modules/
 functions/lib/
 keystore/
 keystore.properties
+
+.kotlin/
+firebase-debug.log

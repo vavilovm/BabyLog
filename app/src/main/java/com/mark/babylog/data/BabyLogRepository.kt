@@ -7,6 +7,107 @@ import org.json.JSONObject
 class BabyLogRepository(private val db: BabyDatabase) {
     val dao = db.events()
     val membership = dao.observeMembership()
+
+    suspend fun beginSleep(time: Long = System.currentTimeMillis()) =
+        db.withTransaction {
+            if (dao.activeSleep() != null) return@withTransaction
+            val owner = dao.membership()
+            val event =
+                BabyEvent(
+                    type = EventType.SLEEP,
+                    detail = "BACK",
+                    startedAt = time,
+                    sleepRecordVersion = 1,
+                    householdId = owner?.householdId,
+                    authorId = owner?.memberId,
+                    authorName = owner?.displayName,
+                    updatedAt = time,
+                    syncState = if (owner == null) SyncState.LOCAL_ONLY else SyncState.PENDING,
+                )
+            val saved = event.copy(id = dao.insert(event))
+            enqueue("SLEEP_START_V1", saved, time)
+        }
+
+    suspend fun finishSleep(
+        time: Long = System.currentTimeMillis(),
+        expectedRemoteId: String? = null,
+    ) =
+        db.withTransaction {
+            val active = dao.activeSleep() ?: return@withTransaction
+            if (expectedRemoteId != null && active.remoteId != expectedRemoteId)
+                return@withTransaction
+            require(time > active.startedAt) { "Пробуждение должно быть позже начала сна" }
+            updateEvent(active.copy(endedAt = time))
+        }
+
+    suspend fun recordSleep(start: Long, end: Long) {
+        require(start < end && end <= System.currentTimeMillis()) { "Проверьте время сна" }
+        val owner = dao.membership()
+        db.withTransaction {
+            val event =
+                BabyEvent(
+                    type = EventType.SLEEP,
+                    detail = "BACK",
+                    startedAt = start,
+                    endedAt = end,
+                    sleepRecordVersion = 1,
+                    householdId = owner?.householdId,
+                    authorId = owner?.memberId,
+                    authorName = owner?.displayName,
+                    syncState = if (owner == null) SyncState.LOCAL_ONLY else SyncState.PENDING,
+                )
+            val saved = event.copy(id = dao.insert(event))
+            enqueue("SLEEP_SAVE_V1", saved, saved.updatedAt)
+        }
+    }
+
+    suspend fun saveProfile(profile: BabyProfile) =
+        db.withTransaction {
+            val birth = java.time.LocalDate.parse(profile.birthday)
+            require(!birth.isAfter(java.time.LocalDate.now())) {
+                "Дата рождения не может быть в будущем"
+            }
+            profile.dueDate?.let { require(!java.time.LocalDate.parse(it).isBefore(birth)) }
+            dao.putProfile(profile)
+            enqueueProfile(profile)
+        }
+
+    private suspend fun enqueueProfile(profile: BabyProfile) {
+        if (dao.membership() == null) return
+        dao.put(
+            SyncOperation(
+                command = "PROFILE_UPSERT",
+                occurredAt = profile.updatedAt,
+                payload =
+                    JSONObject()
+                        .put("birthday", profile.birthday)
+                        .put("dueDate", profile.dueDate ?: JSONObject.NULL)
+                        .put("updatedAt", profile.updatedAt)
+                        .toString(),
+            )
+        )
+    }
+
+    suspend fun applyProfile(raw: Map<String, Any?>, adoptShared: Boolean = false) =
+        db.withTransaction {
+            val birthday = raw["birthday"] as? String ?: return@withTransaction
+            val dueDate = raw["dueDate"] as? String
+            if (
+                runCatching {
+                        val birth = java.time.LocalDate.parse(birthday)
+                        require(birth <= java.time.LocalDate.now())
+                        dueDate?.let { require(java.time.LocalDate.parse(it) >= birth) }
+                    }
+                    .isFailure
+            )
+                return@withTransaction
+            val updated = (raw["updatedAt"] as? Number)?.toLong() ?: return@withTransaction
+            if (adoptShared || (dao.profile()?.updatedAt ?: 0) <= updated)
+                dao.putProfile(
+                    BabyProfile(birthday = birthday, dueDate = dueDate, updatedAt = updated)
+                )
+        }
+
     val pendingCount = dao.observePendingCount()
 
     suspend fun logFeeding(kind: FeedingKind, time: Long = System.currentTimeMillis()) =
@@ -57,8 +158,21 @@ class BabyLogRepository(private val db: BabyDatabase) {
                     authorName = owner?.displayName,
                     syncState = if (owner == null) SyncState.LOCAL_ONLY else SyncState.PENDING,
                 )
+            require(
+                changed.startedAt <= changed.updatedAt &&
+                    (changed.endedAt == null || changed.endedAt <= changed.updatedAt) &&
+                    (changed.endedAt == null ||
+                        if (changed.sleepRecordVersion == 1) changed.endedAt > changed.startedAt
+                        else changed.endedAt >= changed.startedAt)
+            ) {
+                "Проверьте время сна"
+            }
             dao.update(changed)
-            enqueue("UPDATE", changed, changed.updatedAt)
+            enqueue(
+                if (changed.sleepRecordVersion == 1) "SLEEP_SAVE_V1" else "UPDATE",
+                changed,
+                changed.updatedAt,
+            )
         }
 
     suspend fun deleteEvent(event: BabyEvent) =
@@ -76,6 +190,7 @@ class BabyLogRepository(private val db: BabyDatabase) {
     suspend fun attachToFamily() =
         db.withTransaction {
             val owner = dao.membership() ?: return@withTransaction
+            dao.profile()?.let { enqueueProfile(it) }
             dao.localEventsForFamilyAttach().forEach { event ->
                 val pending =
                     event.copy(
@@ -88,6 +203,8 @@ class BabyLogRepository(private val db: BabyDatabase) {
                 val command =
                     when {
                         pending.deletedAt != null -> "DELETE"
+                        pending.sleepRecordVersion == 1 ->
+                            if (pending.endedAt == null) "SLEEP_START_V1" else "SLEEP_SAVE_V1"
                         pending.type == EventType.SLEEP -> "LOG_SLEEP"
                         pending.type == EventType.PUMPING -> "LOG_PUMPING"
                         else -> "LOG_BOTTLE"
@@ -137,6 +254,7 @@ class BabyLogRepository(private val db: BabyDatabase) {
         JSONObject().apply {
             put("remoteId", e.remoteId)
             put("type", e.type.name)
+            put("sleepRecordVersion", e.sleepRecordVersion)
             put("detail", e.detail)
             put("startedAt", e.startedAt)
             put("endedAt", e.endedAt ?: JSONObject.NULL)
@@ -184,12 +302,14 @@ class BabyLogRepository(private val db: BabyDatabase) {
                         detail = remote.detail,
                         startedAt = remote.startedAt,
                         endedAt = remote.endedAt,
+                        sleepRecordVersion = remote.sleepRecordVersion,
                         remoteId = remote.remoteId,
                         householdId = owner?.householdId,
                         authorId = remote.authorId,
                         authorName = remote.authorName,
                         updatedAt = remote.updatedAt,
-                        syncState = SyncState.SYNCED,
+                        syncState =
+                            if (remote.sleepConflict) SyncState.CONFLICT else SyncState.SYNCED,
                         deletedAt = remote.deletedAt,
                     )
                 val localId =
@@ -210,7 +330,8 @@ class BabyLogRepository(private val db: BabyDatabase) {
                             endedAt = segment.endedAt,
                             remoteId = segment.remoteId,
                             updatedAt = segment.updatedAt,
-                            syncState = SyncState.SYNCED,
+                            syncState =
+                                if (remote.sleepConflict) SyncState.CONFLICT else SyncState.SYNCED,
                         )
                     if (old == null) dao.insert(value) else dao.update(value)
                 }
@@ -228,6 +349,8 @@ class BabyLogRepository(private val db: BabyDatabase) {
         val updatedAt: Long,
         val deletedAt: Long?,
         val segments: List<RemoteSegment>,
+        val sleepRecordVersion: Int,
+        val sleepConflict: Boolean,
     )
 
     private data class RemoteSegment(
@@ -261,6 +384,8 @@ class BabyLogRepository(private val db: BabyDatabase) {
             (raw["updatedAt"] as? Number)?.toLong() ?: 0,
             (raw["deletedAt"] as? Number)?.toLong(),
             segments,
+            (raw["sleepRecordVersion"] as? Number)?.toInt() ?: 0,
+            raw["sleepConflict"] == true,
         )
     }
 

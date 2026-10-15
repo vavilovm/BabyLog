@@ -7,6 +7,7 @@ service cloud.firestore {
     match /households/{householdId} {
       allow read: if member(householdId); allow write: if false;
       match /members/{uid} { allow read: if member(householdId); allow write: if false; }
+      match /profiles/{profileId} { allow read: if member(householdId); allow write: if false; }
       match /events/{eventId} { allow read: if member(householdId); allow write: if false; }
       match /reminders/{reminderId} { allow read: if member(householdId); allow write: if false; }
       match /reminderCompletions/{completionId} { allow read: if member(householdId); allow write: if false; }

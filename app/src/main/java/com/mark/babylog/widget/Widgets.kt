@@ -1,7 +1,6 @@
 package com.mark.babylog.widget
 
 import android.content.Context
-import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -17,7 +16,6 @@ import androidx.glance.text.*
 import androidx.glance.unit.ColorProvider
 import com.mark.babylog.BabyLogApp
 import com.mark.babylog.MainActivity
-import com.mark.babylog.R
 import com.mark.babylog.data.*
 import com.mark.babylog.sync.AppSurfaceSync
 
@@ -39,15 +37,46 @@ fun feedingWidgetUi(last: BabyEvent?, now: Long): WidgetUi {
 }
 
 fun sleepWidgetUi(last: BabyEvent?, now: Long): WidgetUi {
-    val buttons =
-        listOf(
-            WidgetButton("", "LEFT", R.drawable.duck_sleep_left),
-            WidgetButton("", "RIGHT", R.drawable.duck_sleep_right),
-        )
+    val active =
+        last?.takeIf {
+            it.sleepRecordVersion == 1 && it.endedAt == null && it.syncState != SyncState.CONFLICT
+        }
     return WidgetUi(
-        "Сон",
-        if (last != null) "Отмечено · ${elapsed(now-last.startedAt)} назад" else "Записей пока нет",
-        buttons,
+        "Сон малыша",
+        if (active != null) "Спит · ${elapsed(now - active.startedAt)}"
+        else
+            last
+                ?.takeIf { it.sleepRecordVersion == 1 }
+                ?.endedAt
+                ?.let { "Бодрствует · ${elapsed(now - it)}" } ?: "Начнём наблюдать её ритм",
+        listOf(
+            WidgetButton(
+                if (active != null) "Проснулась" else "Начать сон",
+                if (active != null) "WAKE" else "SLEEP",
+            )
+        ),
+    )
+}
+
+private suspend fun sleepSurfaceUi(context: Context): WidgetUi {
+    val d = dao(context)
+    val now = System.currentTimeMillis()
+    val ui = sleepWidgetUi(d.activeSleep() ?: d.lastSleep(), now)
+    if (d.activeSleep() != null) return ui
+    val next =
+        com.mark.babylog.sleep.SleepPredictor.calculate(
+                d.sleepSnapshot(now - 32L * 86_400_000),
+                now,
+                profile = d.profile(),
+            )
+            .next ?: return ui
+    val zone = java.time.ZoneId.systemDefault()
+    val format = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+    fun time(t: Long) = java.time.Instant.ofEpochMilli(t).atZone(zone).format(format)
+    return ui.copy(
+        status =
+            if (now > next.latest) "Окно сна прошло · проверьте журнал"
+            else "Сон ≈ ${time(next.earliest)}–${time(next.latest)}"
     )
 }
 
@@ -62,24 +91,11 @@ class FeedAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters,
     ) {
-        val command = parameters[kindKey] ?: "BOTTLE"
-        if (command == "BOTTLE") {
-            context.startActivity(
-                MainActivity.bottleIntent(context)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            )
-            return
-        }
         val app = context.applicationContext as BabyLogApp
-        app.repository.logFeeding(FeedingKind.valueOf(command))
+        if (parameters[kindKey] == "WAKE") app.repository.finishSleep()
+        else app.repository.beginSleep()
         app.familySync.schedule()
-        val widget =
-            when (parameters[surfaceKey]) {
-                "horizontal" -> FeedingHorizontalWidget()
-                "mini" -> FeedingMiniWidget()
-                else -> FeedingWidget()
-            }
-        AppSurfaceSync.refreshFromWidget(context, glanceId, widget)
+        AppSurfaceSync.refresh(context)
     }
 }
 
@@ -90,8 +106,8 @@ class SleepAction : ActionCallback {
         parameters: ActionParameters,
     ) {
         val app = context.applicationContext as BabyLogApp
-        val command = parameters[kindKey] ?: "LEFT"
-        app.repository.startSleep(SleepPosition.valueOf(command))
+        if (parameters[kindKey] == "WAKE") app.repository.finishSleep()
+        else app.repository.beginSleep()
         app.familySync.schedule()
         AppSurfaceSync.refreshFromWidget(context, glanceId, SleepWidget())
     }
@@ -101,8 +117,8 @@ class FeedingWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val d = dao(context)
         val now = System.currentTimeMillis()
-        val ui = feedingWidgetUi(d.lastFeed(), now)
-        provideContent { StandardWidgetBox(ui, FeedAction::class.java, "feeding") }
+        val ui = sleepSurfaceUi(context)
+        provideContent { StandardWidgetBox(ui, SleepAction::class.java, "sleep") }
     }
 }
 
@@ -114,7 +130,7 @@ class SleepWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val d = dao(context)
         val now = System.currentTimeMillis()
-        val ui = sleepWidgetUi(d.lastSleep(), now)
+        val ui = sleepSurfaceUi(context)
         provideContent { StandardWidgetBox(ui, SleepAction::class.java, "sleep") }
     }
 }
@@ -127,8 +143,8 @@ class FeedingHorizontalWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val d = dao(context)
         val now = System.currentTimeMillis()
-        val ui = feedingWidgetUi(d.lastFeed(), now)
-        provideContent { HorizontalWidgetBox(ui, FeedAction::class.java) }
+        val ui = sleepSurfaceUi(context)
+        provideContent { HorizontalWidgetBox(ui, SleepAction::class.java) }
     }
 }
 
@@ -138,11 +154,8 @@ class FeedingHorizontalWidgetReceiver : GlanceAppWidgetReceiver() {
 
 class FeedingMiniWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val buttons =
-            listOf("LEFT" to "L", "RIGHT" to "R", "BOTTLE" to "🍼").map { (command, label) ->
-                WidgetButton(label, command)
-            }
-        provideContent { MiniWidgetBox(buttons, FeedAction::class.java) }
+        val ui = sleepSurfaceUi(context)
+        provideContent { MiniWidgetBox(ui.buttons, SleepAction::class.java) }
     }
 }
 

@@ -30,6 +30,7 @@ class DatabaseMigrationTest {
                     BabyLogApp.MIGRATION_2_3,
                     BabyLogApp.MIGRATION_3_4,
                     BabyLogApp.MIGRATION_4_5,
+                    BabyLogApp.MIGRATION_5_6,
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -37,6 +38,8 @@ class DatabaseMigrationTest {
         try {
             val event = database.events().allForTest().single()
             val segment = database.events().allSegmentsForTest().single()
+            assertEquals(0, event.sleepRecordVersion)
+            assertEquals(null, database.events().profile())
             assertEquals(7L, event.id)
             assertEquals("LEFT", event.detail)
             assertEquals("legacy-event-7", event.remoteId)

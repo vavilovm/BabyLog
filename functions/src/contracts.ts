@@ -9,6 +9,9 @@ export type CommandInput = {
 };
 
 export const EVENT_COMMANDS = new Set([
+  "SLEEP_START_V1",
+  "SLEEP_SAVE_V1",
+  "PROFILE_UPSERT",
   "LOG_SLEEP",
   "LOG_PUMPING",
   "LOG_BOTTLE",
@@ -76,6 +79,27 @@ export function validatePayload(
   command: string,
   payload: JsonRecord
 ): void {
+  if (command === "PROFILE_UPSERT") {
+    const validDate = (value: unknown): boolean => {
+      if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const date = new Date(value + "T00:00:00Z");
+      return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+    if (!validDate(payload.birthday) || String(payload.birthday) > new Date().toISOString().slice(0, 10) ||
+        (payload.dueDate != null && (!validDate(payload.dueDate) || String(payload.dueDate) < String(payload.birthday)))) {
+      throw new HttpsError("invalid-argument", "Invalid birthday or due date");
+    }
+    requiredNumber(payload.updatedAt, "Updated at");
+    return;
+  }
+  if (command === "SLEEP_START_V1" || command === "SLEEP_SAVE_V1") {
+    const start = requiredNumber(payload.startedAt, "Started at");
+    if (payload.type !== "SLEEP" || payload.sleepRecordVersion !== 1 || start > Date.now() ||
+        (payload.endedAt != null && (requiredNumber(payload.endedAt, "Ended at") <= start || Number(payload.endedAt) > Date.now())) ||
+        (command === "SLEEP_START_V1" && payload.endedAt != null)) {
+      throw new HttpsError("invalid-argument", "Invalid timed sleep");
+    }
+  }
   if (REMINDER_COMMANDS.has(command)) {
     requiredString(payload.id, "Reminder id", 100);
     if (command === "REMINDER_UPSERT") {

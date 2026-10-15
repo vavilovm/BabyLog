@@ -29,4 +29,24 @@ class WidgetUiTest {
             )
         assertEquals(listOf("LEFT", "RIGHT", "BOTTLE"), ui.buttons.map { it.command })
     }
+
+    @Test
+    fun sleepWidgetUsesExplicitStartAndWakeActions() {
+        val now = 1_000_000L
+        val empty = com.mark.babylog.widget.sleepWidgetUi(null, now)
+        assertEquals(listOf("SLEEP"), empty.buttons.map { it.command })
+        val active =
+            BabyEvent(
+                type = EventType.SLEEP,
+                detail = "BACK",
+                startedAt = now - 120_000,
+                sleepRecordVersion = 1,
+            )
+        val asleep = com.mark.babylog.widget.sleepWidgetUi(active, now)
+        assertEquals(listOf("WAKE"), asleep.buttons.map { it.command })
+        assertTrue(asleep.status.contains("Спит"))
+        val awake = com.mark.babylog.widget.sleepWidgetUi(active.copy(endedAt = now - 60_000), now)
+        assertEquals(listOf("SLEEP"), awake.buttons.map { it.command })
+        assertTrue(awake.status.contains("Бодрствует"))
+    }
 }

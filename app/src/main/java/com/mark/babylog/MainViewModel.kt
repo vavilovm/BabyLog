@@ -40,6 +40,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val babyApp = app as BabyLogApp
     private val dao = babyApp.database.events()
     private val repository = babyApp.repository
+    val profileLoaded = MutableStateFlow(false)
+    val profile =
+        dao.observeProfile()
+            .onEach { profileLoaded.value = true }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val sleepEvents =
+        flow {
+                while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                    emit(System.currentTimeMillis() - 32L * 86_400_000)
+                    delay(3_600_000)
+                }
+            }
+            .flatMapLatest(dao::observeSleep)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun beginSleep() = launchAction {
+        repository.beginSleep()
+        sync()
+    }
+
+    fun finishSleep() = launchAction {
+        repository.finishSleep()
+        sync()
+    }
+
+    fun recordSleep(start: Long, end: Long) = launchAction {
+        repository.recordSleep(start, end)
+        sync()
+    }
+
+    fun saveProfile(birthday: String, dueDate: String?) = launchAction {
+        repository.saveProfile(BabyProfile(birthday = birthday, dueDate = dueDate))
+        sync()
+    }
+
     private val historyLimit = MutableStateFlow(100)
     private val _errors = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val errors = _errors.asSharedFlow()

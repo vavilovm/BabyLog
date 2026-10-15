@@ -81,7 +81,7 @@ class FamilySync(private val app: BabyLogApp) {
         )
         dao.putMetadata(SyncMetadata(revisionKey, ""))
         registerCurrentToken()
-        pull()
+        pull(adoptSharedProfile = true)
         app.repository.attachToFamily()
         app.reminderRepository.attachToFamily()
         startRealtime()
@@ -197,11 +197,15 @@ class FamilySync(private val app: BabyLogApp) {
         }
     }
 
-    suspend fun pull() {
+    suspend fun pull(adoptSharedProfile: Boolean = false) {
         val owner = dao.membership() ?: return
         val family =
             FirebaseFirestore.getInstance().collection("households").document(owner.householdId)
         val cursor = dao.metadata(revisionKey)?.toLongOrNull()
+        val profileSnapshot = family.collection("profiles").document("baby").get().await()
+        profileSnapshot.data?.let {
+            app.repository.applyProfile(it, adoptShared = adoptSharedProfile)
+        }
         val targetRevision = family.get().await().getLong("revision")
         if (cursor != null && targetRevision != null && targetRevision <= cursor) return
         val (eventSnapshot, reminderSnapshot, completionSnapshot) =
@@ -246,6 +250,12 @@ class FamilySync(private val app: BabyLogApp) {
         fun changes(collection: String) =
             cursor?.let { family.collection(collection).whereGreaterThan("revision", it) }
                 ?: family.collection(collection)
+        listeners +=
+            family.collection("profiles").document("baby").addSnapshotListener { snapshot, _ ->
+                snapshot?.data?.let { raw ->
+                    app.appScope.launch { app.repository.applyProfile(raw) }
+                }
+            }
         listeners +=
             changes("events").addSnapshotListener { snapshot, error ->
                 if (error != null) {

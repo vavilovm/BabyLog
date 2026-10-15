@@ -56,6 +56,7 @@ data class BabyEvent(
     val detail: String,
     val startedAt: Long,
     val endedAt: Long? = null,
+    @ColumnInfo(defaultValue = "0") val sleepRecordVersion: Int = 0,
     val remoteId: String = UUID.randomUUID().toString(),
     val householdId: String? = null,
     val authorId: String? = null,
@@ -151,8 +152,37 @@ data class ReminderCompletion(
     val syncState: SyncState = SyncState.LOCAL_ONLY,
 )
 
+@Entity(tableName = "baby_profile")
+data class BabyProfile(
+    @PrimaryKey val id: Int = 1,
+    val birthday: String,
+    val dueDate: String? = null,
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
 @Dao
 interface EventDao {
+    @Query("SELECT * FROM baby_profile WHERE id=1") fun observeProfile(): Flow<BabyProfile?>
+
+    @Query("SELECT * FROM baby_profile WHERE id=1") suspend fun profile(): BabyProfile?
+
+    @Upsert suspend fun putProfile(profile: BabyProfile)
+
+    @Query(
+        "SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL AND (endedAt IS NULL OR endedAt >= :since) ORDER BY startedAt"
+    )
+    fun observeSleep(since: Long): Flow<List<BabyEvent>>
+
+    @Query(
+        "SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL AND (endedAt IS NULL OR endedAt >= :since) ORDER BY startedAt"
+    )
+    suspend fun sleepSnapshot(since: Long): List<BabyEvent>
+
+    @Query(
+        "SELECT * FROM events WHERE type='SLEEP' AND sleepRecordVersion=1 AND endedAt IS NULL AND deletedAt IS NULL AND syncState != 'CONFLICT' ORDER BY startedAt LIMIT 1"
+    )
+    suspend fun activeSleep(): BabyEvent?
+
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<BabyEvent>>
 
@@ -405,6 +435,7 @@ class Converters {
 @Database(
     entities =
         [
+            BabyProfile::class,
             BabyEvent::class,
             SleepSegment::class,
             SyncOperation::class,
@@ -413,7 +444,7 @@ class Converters {
             BabyReminder::class,
             ReminderCompletion::class,
         ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

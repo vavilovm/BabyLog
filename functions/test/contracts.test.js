@@ -39,3 +39,21 @@ test("trims and bounds user-controlled strings", () => {
   assert.throws(() => requiredString("", "Display name"), /invalid/);
   assert.throws(() => requiredString("x".repeat(81), "Display name", 80), /invalid/);
 });
+
+test("versioned sleep commands preserve active and completed intervals", () => {
+  const payload = {remoteId: "sleep-1", type: "SLEEP", detail: "BACK", sleepRecordVersion: 1, startedAt: 1000, endedAt: null};
+  const command = parseCommand({commandId: "sleep-command", command: "SLEEP_START_V1", payload});
+  validatePayload(command.command, command.payload);
+  validatePayload("SLEEP_SAVE_V1", {...payload, endedAt: 2000});
+  assert.throws(() => validatePayload("SLEEP_START_V1", {...payload, endedAt: 2000}), /Invalid timed sleep/);
+  assert.throws(() => validatePayload("SLEEP_SAVE_V1", {...payload, endedAt: 500}), /Invalid timed sleep/);
+  assert.throws(() => validatePayload("SLEEP_SAVE_V1", {...payload, sleepRecordVersion: 0}), /Invalid timed sleep/);
+});
+
+test("birthday profile rejects impossible and reversed dates", () => {
+  validatePayload("PROFILE_UPSERT", {birthday: "2026-07-01", dueDate: "2026-08-01", updatedAt: 10});
+  for (const birthday of ["2026-02-30", "tomorrow", "2999-01-01"]) {
+    assert.throws(() => validatePayload("PROFILE_UPSERT", {birthday, updatedAt: 10}), /Invalid birthday/);
+  }
+  assert.throws(() => validatePayload("PROFILE_UPSERT", {birthday: "2026-07-01", dueDate: "2026-06-01", updatedAt: 10}), /Invalid birthday/);
+});

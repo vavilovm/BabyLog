@@ -1,10 +1,10 @@
 <resources>
-    <string name="widget_feeding_name">Кормление · полный</string>
-    <string name="widget_feeding_description">Таймер и все действия кормления</string>
+    <string name="widget_feeding_name">Сон · полный</string>
+    <string name="widget_feeding_description">Начало сна и пробуждение</string>
     <string name="widget_sleep_name">Сон · полный</string>
-    <string name="widget_sleep_description">Таймер сна и выбор положения</string>
-    <string name="widget_feeding_horizontal_name">Кормление · горизонтальный</string>
-    <string name="widget_feeding_horizontal_description">Компактный таймер кормления в одну строку</string>
-    <string name="widget_feeding_mini_name">Кормление · мини</string>
-    <string name="widget_feeding_mini_description">Три быстрых действия кормления</string>
+    <string name="widget_sleep_description">Начало сна и пробуждение</string>
+    <string name="widget_feeding_horizontal_name">Сон · горизонтальный</string>
+    <string name="widget_feeding_horizontal_description">Компактный учёт сна в одну строку</string>
+    <string name="widget_feeding_mini_name">Сон · мини</string>
+    <string name="widget_feeding_mini_description">Быстрый учёт сна</string>
 </resources>

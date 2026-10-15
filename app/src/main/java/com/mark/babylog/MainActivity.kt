@@ -68,11 +68,9 @@ class MainActivity : ComponentActivity() {
             BabyTheme {
                 NotificationPermission()
                 val vm: MainViewModel = viewModel()
-                BabyScreen(
-                    vm.state.collectAsStateWithLifecycle().value,
+                SleepScreen(
                     vm,
                     initialInvite = inviteRequest,
-                    bottleRequestKey = bottleRequest,
                     onInviteConsumed = { inviteRequest = null },
                 )
             }
@@ -346,7 +344,7 @@ fun BabyScreen(
 }
 
 @Composable
-private fun FamilyDialog(
+internal fun FamilyDialog(
     membership: FamilyMembership?,
     vm: MainViewModel,
     initialCode: String,
@@ -627,7 +625,7 @@ internal fun ReminderPanel(
 }
 
 @Composable
-private fun ReminderSettingsDialog(
+internal fun ReminderSettingsDialog(
     reminders: List<BabyReminder>,
     onDismiss: () -> Unit,
     onAdd: () -> Unit,
@@ -697,7 +695,7 @@ private fun ReminderSettingsDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReminderEditDialog(
+internal fun ReminderEditDialog(
     reminder: BabyReminder?,
     onDismiss: () -> Unit,
     onSave: (BabyReminder) -> Unit,

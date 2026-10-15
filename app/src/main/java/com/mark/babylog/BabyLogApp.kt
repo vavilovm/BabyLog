@@ -20,7 +20,13 @@ class BabyLogApp : Application() {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + backgroundErrors)
     val database by lazy {
         Room.databaseBuilder(this, BabyDatabase::class.java, "baby-log.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+            )
             .build()
     }
     val repository by lazy { BabyLogRepository(database) }
@@ -42,6 +48,18 @@ class BabyLogApp : Application() {
     }
 
     companion object {
+        val MIGRATION_5_6 =
+            object : Migration(5, 6) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE events ADD COLUMN sleepRecordVersion INTEGER NOT NULL DEFAULT 0"
+                    )
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS baby_profile (id INTEGER NOT NULL, birthday TEXT NOT NULL, dueDate TEXT, updatedAt INTEGER NOT NULL, PRIMARY KEY(id))"
+                    )
+                }
+            }
+
         val MIGRATION_1_2 =
             object : Migration(1, 2) {
                 override fun migrate(db: SupportSQLiteDatabase) {

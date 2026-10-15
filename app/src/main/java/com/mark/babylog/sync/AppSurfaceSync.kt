@@ -56,10 +56,9 @@ object AppSurfaceSync {
                 launch {
                     runCatching {
                             val lastFeed =
-                                (context.applicationContext as BabyLogApp)
-                                    .database
-                                    .events()
-                                    .lastFeed()
+                                (context.applicationContext as BabyLogApp).database.events().let {
+                                    it.activeSleep() ?: it.lastSleep()
+                                }
                             refreshNotification(context, lastFeed)
                         }
                         .onFailure { Log.w("BabyLog", "Notification refresh failed", it) }
@@ -74,7 +73,9 @@ object AppSurfaceSync {
                 launch { runCatching { refreshWidgets(context) } }
                 launch {
                     val lastFeed =
-                        (context.applicationContext as BabyLogApp).database.events().lastFeed()
+                        (context.applicationContext as BabyLogApp).database.events().let {
+                            it.activeSleep() ?: it.lastSleep()
+                        }
                     runCatching { refreshNotification(context, lastFeed) }
                 }
             }
@@ -108,7 +109,7 @@ object AppSurfaceSync {
             .updateAppWidget((id as AppWidgetId).appWidgetId, views)
     }
 
-    private fun refreshNotification(context: Context, lastFeed: BabyEvent?) {
+    private suspend fun refreshNotification(context: Context, lastFeed: BabyEvent?) {
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(LEGACY_NOTIFICATION_ID)
         manager.cancel(NOTIFICATION_ID)
@@ -120,7 +121,67 @@ object AppSurfaceSync {
                 ) != PackageManager.PERMISSION_GRANTED
         )
             return
-        showFeedingStartNotification(context, manager, lastFeed)
+        manager.cancel(FEEDING_START_NOTIFICATION_ID)
+        val channel = "sleep_tracking_v1"
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .createNotificationChannel(
+                NotificationChannel(channel, "Учёт сна", NotificationManager.IMPORTANCE_LOW)
+            )
+        val active =
+            lastFeed?.takeIf {
+                it.sleepRecordVersion == 1 &&
+                    it.endedAt == null &&
+                    it.syncState != SyncState.CONFLICT
+            }
+        val open =
+            PendingIntent.getActivity(
+                context,
+                0,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        val dao = (context.applicationContext as BabyLogApp).database.events()
+        val now = System.currentTimeMillis()
+        val estimate =
+            if (active == null)
+                com.mark.babylog.sleep.SleepPredictor.calculate(
+                        dao.sleepSnapshot(now - 32L * 86_400_000),
+                        now,
+                        profile = dao.profile(),
+                    )
+                    .next
+            else null
+        val timeFormat = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+        fun time(value: Long) =
+            java.time.Instant.ofEpochMilli(value)
+                .atZone(java.time.ZoneId.systemDefault())
+                .format(timeFormat)
+        val summary =
+            if (active != null) "Отметьте пробуждение, когда сон закончится"
+            else if (estimate != null && now > estimate.latest) "Окно сна прошло · проверьте журнал"
+            else
+                estimate?.let { "Следующий сон ≈ ${time(it.earliest)}–${time(it.latest)}" }
+                    ?: "Одно нажатие, чтобы начать сон"
+        val builder =
+            NotificationCompat.Builder(context, channel)
+                .setSmallIcon(R.drawable.ic_stat_timer)
+                .setContentTitle(if (active != null) "Малышка спит" else "Учёт сна")
+                .setContentText(summary)
+                .setContentIntent(open)
+                .setOnlyAlertOnce(true)
+                .setOngoing(active != null)
+                .addAction(
+                    0,
+                    if (active != null) "Проснулась" else "Начать сон",
+                    action(
+                        context,
+                        if (active != null) "SLEEP_WAKE" else "SLEEP_START",
+                        51,
+                        active?.remoteId,
+                    ),
+                )
+        active?.let { builder.setWhen(it.startedAt).setUsesChronometer(true) }
+        manager.notify(NOTIFICATION_ID, builder.build())
     }
 
     private fun showFeedingStartNotification(
@@ -261,7 +322,7 @@ object AppSurfaceSync {
         elapsedRealtimeNow -
             (wallClockNow - (lastFeed.endedAt ?: lastFeed.startedAt)).coerceAtLeast(0)
 
-    private fun action(context: Context, command: String, request: Int) =
+    private fun action(context: Context, command: String, request: Int, sleepId: String? = null) =
         if (command == "FEED_BOTTLE")
             PendingIntent.getActivity(
                 context,
@@ -274,7 +335,9 @@ object AppSurfaceSync {
             PendingIntent.getBroadcast(
                 context,
                 request,
-                Intent(context, TimerActionReceiver::class.java).putExtra("command", command),
+                Intent(context, TimerActionReceiver::class.java)
+                    .putExtra("command", command)
+                    .putExtra("sleepId", sleepId),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
 }
@@ -287,10 +350,11 @@ class TimerActionReceiver : BroadcastReceiver() {
                 val app = context.applicationContext as BabyLogApp
                 when (intent.getStringExtra("command")) {
                     "STOP" -> app.repository.stop()
-                    "FEED_LEFT" -> app.repository.logFeeding(FeedingKind.LEFT)
-                    "FEED_RIGHT" -> app.repository.logFeeding(FeedingKind.RIGHT)
-                    "SLEEP_LEFT" -> app.repository.startSleep(SleepPosition.LEFT)
-                    "SLEEP_RIGHT" -> app.repository.startSleep(SleepPosition.RIGHT)
+                    "SLEEP_START" -> app.repository.beginSleep()
+                    "SLEEP_WAKE" ->
+                        app.repository.finishSleep(
+                            expectedRemoteId = intent.getStringExtra("sleepId")
+                        )
                 }
                 app.familySync.schedule()
                 AppSurfaceSync.refresh(context)

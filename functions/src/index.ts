@@ -20,6 +20,8 @@ import {
   validatePayload,
 } from "./contracts";
 
+import {sleepWriteState} from "./sleepState";
+
 initializeApp();
 const db = getFirestore();
 
@@ -133,6 +135,7 @@ function targetFor(
   command: string,
   payload: JsonRecord
 ): DocumentReference {
+  if (command === "PROFILE_UPSERT") return family.collection("profiles").doc("baby");
   if (REMINDER_COMMANDS.has(command)) {
     return family.collection("reminders").doc(hash(String(payload.id)));
   }
@@ -163,7 +166,11 @@ function writeEvent(
     command === "LOG_PUMPING" ||
     command === "LOG_BOTTLE" ||
     (command === "START" && payload.type === "SLEEP");
-  if (instant) {
+  if (command === "SLEEP_START_V1" || command === "SLEEP_SAVE_V1") {
+    const state = sleepWriteState(activeEventId, payload.remoteId, payload.endedAt, payload.deletedAt);
+    tx.set(target, {...authored, sleepConflict: state.conflict});
+    if (state.pointer !== undefined) tx.set(family, {activeSleepId: state.pointer}, {merge: true});
+  } else if (instant) {
     tx.set(target, {
       ...authored,
       endedAt: payload.endedAt ?? payload.startedAt ?? occurredAt,
@@ -192,7 +199,7 @@ function writeEvent(
       {merge: true}
     );
     if (activeEventId === payload.remoteId) {
-      tx.set(family, {activeEventId: null}, {merge: true});
+      tx.set(family, payload.sleepRecordVersion === 1 ? {activeSleepId: null} : {activeEventId: null}, {merge: true});
     }
   } else if (command === "UPDATE") {
     tx.set(target, authored, {merge: true});
@@ -209,7 +216,7 @@ function writeEvent(
       {merge: true}
     );
     if (activeEventId === payload.remoteId) {
-      tx.set(family, {activeEventId: null}, {merge: true});
+      tx.set(family, payload.sleepRecordVersion === 1 ? {activeSleepId: null} : {activeEventId: null}, {merge: true});
     }
   }
 }
@@ -243,12 +250,12 @@ async function processOne(
     const incomingUpdatedAt = Number(input.payload.updatedAt ?? input.occurredAt);
     const shouldApply =
       !current ||
-      !REMINDER_COMMANDS.has(input.command) && !COMPLETION_COMMANDS.has(input.command) ||
+      !["PROFILE_UPSERT", "SLEEP_START_V1", "SLEEP_SAVE_V1"].includes(input.command) && !REMINDER_COMMANDS.has(input.command) && !COMPLETION_COMMANDS.has(input.command) ||
       incomingUpdatedAt >= Number(current.updatedAt ?? 0);
     const revision = shouldApply ? currentRevision + 1 : currentRevision;
 
     if (shouldApply) {
-      if (REMINDER_COMMANDS.has(input.command) || COMPLETION_COMMANDS.has(input.command)) {
+      if (input.command === "PROFILE_UPSERT" || REMINDER_COMMANDS.has(input.command) || COMPLETION_COMMANDS.has(input.command)) {
         tx.set(
           target,
           {...input.payload, updatedAt: incomingUpdatedAt, revision},
@@ -265,7 +272,7 @@ async function processOne(
           revision,
           uid,
           user,
-          state.activeEventId
+          ["SLEEP_START_V1", "SLEEP_SAVE_V1"].includes(input.command) || input.payload.sleepRecordVersion === 1 ? state.activeSleepId : state.activeEventId
         );
       }
       tx.set(family, {revision}, {merge: true});

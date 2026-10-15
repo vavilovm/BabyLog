@@ -1272,7 +1272,7 @@ internal fun EditDialog(
 }
 
 @Composable
-private fun MinuteShortcuts(onMove: (Long) -> Unit) {
+internal fun MinuteShortcuts(onMove: (Long) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf(-5L, -1L, 1L, 5L).forEach { delta ->
             AssistChip(

@@ -89,6 +89,18 @@ class SleepChartScreenshotTest {
             }
         }
 
+    @Test
+    fun sleepEditor_timeAndDateShortcuts() =
+        paparazzi.snapshot {
+            BabyTheme { SleepEntryDialog(events.first(), zone, {}, { _, _ -> }, {}) }
+        }
+
+    @Test
+    fun sleepStatus_showsSeconds() =
+        paparazzi.snapshot {
+            BabyTheme { SleepStatusCard(null, now - 125_000, now, zone, {}, {}, {}) }
+        }
+
     @Test fun weeklySleep_chartAndTotals() = paparazzi.snapshot { BabyTheme { Chart(7) } }
 
     @Test

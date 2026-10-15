@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,13 +55,14 @@ fun SleepScreen(
     LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
-            delay(15_000)
+            delay(1_000)
         }
     }
     val zone = ZoneId.systemDefault()
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val predictionTime = now / 15_000 * 15_000
     val prediction =
-        remember(events, now, zone, profile) {
+        remember(events, predictionTime, zone, profile) {
             SleepPredictor.calculate(events, now, zone, profile)
         }
     val sessions = remember(events, now) { SleepPredictor.validSessions(events, now) }
@@ -350,66 +352,35 @@ internal fun ProfileDialog(
 }
 
 @Composable
-private fun SleepEntryDialog(
+internal fun SleepEntryDialog(
     event: BabyEvent?,
     zone: ZoneId,
     onDismiss: () -> Unit,
     onSave: (Long, Long?) -> Unit,
     onDelete: () -> Unit,
 ) {
-    val context = LocalContext.current
     val now = System.currentTimeMillis()
     var start by remember { mutableLongStateOf(event?.startedAt ?: now - 3_600_000) }
     var end by remember {
         mutableStateOf(if (event == null || event.sleepRecordVersion == 0) now else event.endedAt)
-    }
-    fun pick(time: Long, set: (Long) -> Unit) {
-        val z = Instant.ofEpochMilli(time).atZone(zone)
-        DatePickerDialog(
-                context,
-                { _, y, m, d ->
-                    TimePickerDialog(
-                            context,
-                            { _, h, min ->
-                                set(
-                                    LocalDate.of(y, m + 1, d)
-                                        .atTime(h, min)
-                                        .atZone(zone)
-                                        .toInstant()
-                                        .toEpochMilli()
-                                )
-                            },
-                            z.hour,
-                            z.minute,
-                            true,
-                        )
-                        .show()
-                },
-                z.year,
-                z.monthValue - 1,
-                z.dayOfMonth,
-            )
-            .apply { datePicker.maxDate = now }
-            .show()
     }
     val valid = start <= now && (end == null || (end!! > start && end!! <= now))
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (event == null) "Добавить сон" else "Изменить сон") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Text("Укажите фактическое время засыпания и пробуждения.")
-                OutlinedButton(onClick = { pick(start) { start = it } }) {
-                    Text(
-                        "Начало: ${Instant.ofEpochMilli(start).atZone(zone).format(dateFormat)} ${clock(start, zone)}"
-                    )
-                }
-                OutlinedButton(onClick = { pick(end ?: now) { end = it } }) {
-                    Text(
-                        end?.let {
-                            "Конец: ${Instant.ofEpochMilli(it).atZone(zone).format(dateFormat)} ${clock(it, zone)}"
-                        } ?: "Ещё спит · указать пробуждение"
-                    )
+                SleepEntryTimeField("Начало", start, zone) { start = it }
+                if (end != null) {
+                    SleepEntryTimeField("Конец", end!!, zone) { end = it }
+                } else {
+                    OutlinedButton(onClick = { end = System.currentTimeMillis() }) {
+                        Text("Ещё спит · указать пробуждение")
+                    }
                 }
                 if (!valid)
                     Text(
@@ -615,8 +586,8 @@ internal fun SleepStatusCard(
                 style = MaterialTheme.typography.titleLarge,
             )
             Text(
-                if (active != null) duration(now - active.startedAt)
-                else lastWake?.let { duration(now - it) } ?: "Начнём наблюдать её ритм",
+                if (active != null) sleepStatusDuration(now - active.startedAt)
+                else lastWake?.let { sleepStatusDuration(now - it) } ?: "Начнём наблюдать её ритм",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
             )
@@ -687,5 +658,69 @@ internal fun NextSleepCard(estimate: SleepEstimate?, sleeping: Boolean, now: Lon
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+internal fun sleepStatusDuration(ms: Long): String {
+    val seconds = ms.coerceAtLeast(0) / 1_000
+    return if (seconds < 3_600) "${seconds / 60} мин ${seconds % 60} с" else duration(ms)
+}
+
+@Composable
+private fun SleepEntryTimeField(label: String, time: Long, zone: ZoneId, onChange: (Long) -> Unit) {
+    val context = LocalContext.current
+    val selected = Instant.ofEpochMilli(time).atZone(zone)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = {
+                    TimePickerDialog(
+                            context,
+                            { _, hour, minute ->
+                                onChange(
+                                    selected
+                                        .toLocalDate()
+                                        .atTime(hour, minute)
+                                        .atZone(zone)
+                                        .toInstant()
+                                        .toEpochMilli()
+                                )
+                            },
+                            selected.hour,
+                            selected.minute,
+                            true,
+                        )
+                        .show()
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(clock(time, zone), fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = {
+                    DatePickerDialog(
+                            context,
+                            { _, year, month, day ->
+                                onChange(
+                                    LocalDate.of(year, month + 1, day)
+                                        .atTime(selected.toLocalTime())
+                                        .atZone(zone)
+                                        .toInstant()
+                                        .toEpochMilli()
+                                )
+                            },
+                            selected.year,
+                            selected.monthValue - 1,
+                            selected.dayOfMonth,
+                        )
+                        .apply { datePicker.maxDate = System.currentTimeMillis() }
+                        .show()
+                }
+            ) {
+                Text(selected.format(dateFormat))
+            }
+        }
+        MinuteShortcuts { onChange(moveMinutes(time, it).coerceAtLeast(0)) }
     }
 }

@@ -112,7 +112,6 @@ object AppSurfaceSync {
     private suspend fun refreshNotification(context: Context, lastFeed: BabyEvent?) {
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(LEGACY_NOTIFICATION_ID)
-        manager.cancel(NOTIFICATION_ID)
         if (
             Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(
@@ -122,10 +121,15 @@ object AppSurfaceSync {
         )
             return
         manager.cancel(FEEDING_START_NOTIFICATION_ID)
-        val channel = "sleep_tracking_v1"
+        val channel = "sleep_quick_actions_v2"
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .createNotificationChannel(
-                NotificationChannel(channel, "Учёт сна", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(channel, "Учёт сна", NotificationManager.IMPORTANCE_DEFAULT)
+                    .apply {
+                        setSound(null, null)
+                        enableVibration(false)
+                        setShowBadge(false)
+                    }
             )
         val active =
             lastFeed?.takeIf {
@@ -133,13 +137,6 @@ object AppSurfaceSync {
                     it.endedAt == null &&
                     it.syncState != SyncState.CONFLICT
             }
-        val open =
-            PendingIntent.getActivity(
-                context,
-                0,
-                Intent(context, MainActivity::class.java),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
         val dao = (context.applicationContext as BabyLogApp).database.events()
         val now = System.currentTimeMillis()
         val estimate =
@@ -162,26 +159,64 @@ object AppSurfaceSync {
             else
                 estimate?.let { "Следующий сон ≈ ${time(it.earliest)}–${time(it.latest)}" }
                     ?: "Одно нажатие, чтобы начать сон"
-        val builder =
-            NotificationCompat.Builder(context, channel)
-                .setSmallIcon(R.drawable.ic_stat_timer)
-                .setContentTitle(if (active != null) "Малышка спит" else "Учёт сна")
-                .setContentText(summary)
-                .setContentIntent(open)
-                .setOnlyAlertOnce(true)
-                .setOngoing(active != null)
-                .addAction(
-                    0,
-                    if (active != null) "Проснулась" else "Начать сон",
-                    action(
-                        context,
-                        if (active != null) "SLEEP_WAKE" else "SLEEP_START",
-                        51,
-                        active?.remoteId,
-                    ),
+        manager.notify(NOTIFICATION_ID, sleepNotification(context, lastFeed, summary, now))
+    }
+
+    internal fun sleepNotification(
+        context: Context,
+        lastSleep: BabyEvent?,
+        summary: String,
+        now: Long,
+        elapsedRealtimeNow: Long = SystemClock.elapsedRealtime(),
+    ): Notification {
+        val current =
+            lastSleep?.takeIf {
+                it.sleepRecordVersion == 1 &&
+                    it.deletedAt == null &&
+                    it.syncState != SyncState.CONFLICT
+            }
+        val active = current?.takeIf { it.endedAt == null }
+        val open =
+            PendingIntent.getActivity(
+                context,
+                0,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        val label = if (active != null) "Проснулась" else "Начать сон"
+        val command = if (active != null) "SLEEP_WAKE" else "SLEEP_START"
+        val compact =
+            RemoteViews(context.packageName, R.layout.notification_sleep_compact).apply {
+                if (current == null) setTextViewText(R.id.sleep_notification_timer, "Сон малыша")
+                else
+                    setChronometer(
+                        R.id.sleep_notification_timer,
+                        feedingChronometerBase(current, now, elapsedRealtimeNow),
+                        if (active != null) "Спит · %s" else "Бодрствует · %s",
+                        true,
+                    )
+                setTextViewText(R.id.sleep_notification_action, label)
+                setContentDescription(R.id.sleep_notification_action, label)
+                setOnClickPendingIntent(
+                    R.id.sleep_notification_action,
+                    action(context, command, 51, active?.remoteId),
                 )
-        active?.let { builder.setWhen(it.startedAt).setUsesChronometer(true) }
-        manager.notify(NOTIFICATION_ID, builder.build())
+            }
+        return NotificationCompat.Builder(context, "sleep_quick_actions_v2")
+            .setSmallIcon(R.drawable.ic_stat_timer)
+            .setContentTitle(if (active != null) "Малышка спит" else "Учёт сна")
+            .setContentText(summary)
+            .setContentIntent(open)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            // Both forms contain the action; Android's standard action row only appears expanded.
+            .setCustomContentView(compact)
+            .setCustomBigContentView(compact)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .build()
     }
 
     private fun showFeedingStartNotification(

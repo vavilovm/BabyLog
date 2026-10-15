@@ -15,8 +15,8 @@ android {
         applicationId = "com.mark.babylog"
         minSdk = 26
         targetSdk = 35
-        versionCode = 42
-        versionName = "0.11.2"
+        versionCode = providers.gradleProperty("releaseVersionCode").orNull?.toInt() ?: 42
+        versionName = providers.gradleProperty("releaseVersionName").orNull ?: "0.11.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {
@@ -30,6 +30,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     testOptions {
+        unitTests.isIncludeAndroidResources = true
         unitTests.all {
             // Reusing the test JVM saves several seconds of Robolectric startup
             // per class. Screenshot tests are an explicit local workflow and do

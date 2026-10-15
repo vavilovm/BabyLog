@@ -78,6 +78,22 @@ class SleepPredictorTest {
     }
 
     @Test
+    fun newlyObservedPendingSleepIsValidWhileRealOverlapRemainsAConflict() {
+        val startedAt = base + 500
+        val active = session(startedAt).copy(endedAt = null, syncState = SyncState.PENDING)
+        val observedAt = startedAt + 1
+        val result = SleepPredictor.calculate(listOf(active), observedAt, zone)
+        assertTrue(result.conflicts.isEmpty())
+        assertEquals(active, SleepPredictor.validSessions(listOf(active), observedAt).single())
+        val previous = session(startedAt - 60_000).copy(endedAt = startedAt + 1)
+        assertTrue(
+            SleepPredictor.calculate(listOf(previous, active), observedAt, zone)
+                .conflicts
+                .containsAll(listOf(previous.remoteId, active.remoteId))
+        )
+    }
+
+    @Test
     fun oldPredictionDoesNotMoveForwardWithClock() {
         val events = history(3)
         val wake = events.last().endedAt!!

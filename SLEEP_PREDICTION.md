@@ -72,9 +72,9 @@ using the group containing the personal weighted median. This avoids a window
 spanning brief night wakings and consolidated overnight sleep. The descriptive
 window uses weighted 20th–80th percentiles, with a minimum half-width of 10 minutes
 for naps and 30 minutes for nights; no proportional padding is added. This is a
-typical-history range, not a calibrated probability interval. If its width exceeds
-four hours for nights or two hours for naps, the UI explains that duration varies
-instead of displaying an unhelpfully broad window. Central wake times are rounded
+typical-history range, not a calibrated probability interval. The UI always shows the full range as a visual band with an expected-wake marker,
+including when the range is broad. The graph marks both bounds and the expected
+wake and includes tomorrow when the upper bound extends into it. Central wake times are rounded
 to five minutes.
 
 Keep the estimate anchored to sleep onset when the clock advances; if it passes,
@@ -125,3 +125,10 @@ timed-session transitions, profile sync, and migration from the legacy database.
 Screenshot fixtures cover charts, dark mode, larger text, and birthday onboarding.
 The app exposes historical median timing error and interval coverage. These are
 based on logged history; synthetic tests are not a claim of accuracy for a baby.
+
+## Screen timing
+
+Each sleep-record emission captures a fresh observation clock before validation.
+This avoids treating a just-started or just-finished sleep as future-dated between
+the one-second UI ticks and caching a false conflict for the 15-second prediction
+refresh period. Real overlaps and sync conflicts still appear in history.

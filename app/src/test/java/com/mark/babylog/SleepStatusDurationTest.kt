@@ -1,5 +1,6 @@
 package com.mark.babylog
 
+import com.mark.babylog.sleep.CurrentSleepEstimate
 import com.mark.babylog.sleep.ForecastSleep
 import java.time.*
 import org.junit.Assert.assertEquals
@@ -34,6 +35,26 @@ class SleepStatusDurationTest {
             sleepChartDays(listOf(ForecastSleep(now, midnight + 8 * 3_600_000L, 30)), now, zone, 7)
         assertEquals(8, days.size)
         assertEquals(today.minusDays(6), days.first())
+        assertEquals(today.plusDays(1), days.last())
+    }
+
+    @Test
+    fun upperWakeBoundaryAddsTomorrowEvenIfExpectedWakeIsToday() {
+        val zone = ZoneId.of("Europe/Amsterdam")
+        val today = LocalDate.of(2026, 10, 15)
+        val now = today.atTime(21, 0).atZone(zone).toInstant().toEpochMilli()
+        val range =
+            CurrentSleepEstimate(
+                now,
+                now + 3_600_000L,
+                now + 2 * 3_600_000L,
+                now + 6 * 3_600_000L,
+                3,
+                true,
+            )
+        val days =
+            sleepChartDays(listOf(ForecastSleep(now, range.expectedWake, 30)), now, zone, 7, range)
+        assertEquals(8, days.size)
         assertEquals(today.plusDays(1), days.last())
     }
 }

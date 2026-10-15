@@ -62,10 +62,14 @@ fun SleepScreen(
     val membership by vm.membership.collectAsStateWithLifecycle()
     val reminders by vm.reminderState.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var clockTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    // A Room emission can arrive between ticks. Evaluate it with a fresh clock,
+    // otherwise a just-started session looks future-dated until the next prediction refresh.
+    val observedAt = remember(events) { System.currentTimeMillis() }
+    val now = maxOf(clockTick, observedAt)
     LaunchedEffect(Unit) {
         while (true) {
-            now = System.currentTimeMillis()
+            clockTick = System.currentTimeMillis()
             delay(1_000)
         }
     }
@@ -134,12 +138,7 @@ fun SleepScreen(
             item { NextSleepCard(prediction.next, active != null, now, zone, prediction.current) }
 
             if (prediction.conflicts.isNotEmpty())
-                item {
-                    Text(
-                        "Есть пересекающиеся или незавершённые записи. Исправьте их в истории — они не участвуют в прогнозе.",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
+                item { Text("Проверьте время в истории", color = MaterialTheme.colorScheme.error) }
             item {
                 Text("Ритм сна", style = MaterialTheme.typography.titleLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -151,10 +150,6 @@ fun SleepScreen(
                         )
                     }
                 }
-                Text(
-                    "Сплошной цвет — записанный сон · светлый — прогноз. Нажмите на сон, чтобы изменить.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
             item {
                 SleepChart(
@@ -164,29 +159,10 @@ fun SleepScreen(
                     zone,
                     days,
                     onSelect = { editing = it },
+                    current = prediction.current,
                 )
             }
             item { SleepTotals(sessions, now, zone) }
-            if (prediction.forecast.isNotEmpty() && active == null)
-                item {
-                    OutlinedCard(Modifier.fillMaxWidth()) {
-                        Column(
-                            Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text("Ориентир сна", style = MaterialTheme.typography.titleMedium)
-                            prediction.forecast.forEach { f ->
-                                Text(
-                                    "${if (f.end - f.start >= 3 * 3_600_000) "Ночной сон" else "Сон"}: ${clock(f.start, zone)} – ${clock(f.end, zone)} · ±${f.uncertaintyMinutes} мин"
-                                )
-                            }
-                            Text(
-                                "Дальние оценки менее точны. План обновится после фактического пробуждения.",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                }
             item {
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     TextButton(onClick = { adding = true }) { Text("+ Добавить сон") }
@@ -232,10 +208,6 @@ fun SleepScreen(
             item {
                 val context = LocalContext.current
                 TextButton(onClick = { vm.shareCsv(context) }) { Text("Экспорт журнала") }
-                Text(
-                    "О прогнозах: личная статистика сна и времени бодрствования. Точность проверяется только на более поздних записях, без подсказок из будущего.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
         }
     }
@@ -413,16 +385,19 @@ internal fun sleepChartDays(
     now: Long,
     zone: ZoneId,
     days: Int,
+    current: CurrentSleepEstimate? = null,
 ): List<LocalDate> {
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val tomorrow = today.plusDays(1)
     val tomorrowStart = tomorrow.atStartOfDay(zone).toInstant().toEpochMilli()
     val history = (days - 1 downTo 0).map { today.minusDays(it.toLong()) }
     return if (
-        forecast.any {
-            it.start < tomorrow.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() &&
-                it.end > tomorrowStart
-        }
+        (forecast +
+                listOfNotNull(current?.let { ForecastSleep(it.earliestWake, it.latestWake, 0) }))
+            .any {
+                it.start < tomorrow.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() &&
+                    it.end > tomorrowStart
+            }
     )
         history + tomorrow
     else history
@@ -436,6 +411,7 @@ internal fun SleepChart(
     zone: ZoneId,
     days: Int,
     onSelect: (BabyEvent) -> Unit,
+    current: CurrentSleepEstimate? = null,
 ) {
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val colour = MaterialTheme.colorScheme.primary
@@ -448,7 +424,7 @@ internal fun SleepChart(
                 Text(it, style = MaterialTheme.typography.labelSmall)
             }
         }
-        sleepChartDays(forecast, now, zone, days).forEach { day ->
+        sleepChartDays(forecast, now, zone, days, current).forEach { day ->
             val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
             val end = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
             // Wall-clock coordinates align the same hour across days, even on DST transitions.
@@ -479,6 +455,21 @@ internal fun SleepChart(
                                 .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                         )
                     }
+                    current
+                        ?.takeIf { it.earliestWake < end && it.latestWake > start }
+                        ?.let { range ->
+                            Box(
+                                Modifier.offset(x = width * fraction(range.earliestWake))
+                                    .width(
+                                        width *
+                                            (fraction(range.latestWake) -
+                                                    fraction(range.earliestWake))
+                                                .coerceAtLeast(0.005f)
+                                    )
+                                    .fillMaxHeight()
+                                    .background(colour.copy(alpha = 0.12f))
+                            )
+                        }
                     events
                         .filter {
                             it.sleepRecordVersion == 1 &&
@@ -488,7 +479,8 @@ internal fun SleepChart(
                         .forEach { e ->
                             val left = fraction(e.startedAt)
                             val right = fraction(e.endedAt ?: now)
-                            // A repeated DST hour can map backwards; retain a visible inspectable
+                            // A repeated DST hour can map backwards; retain a visible
+                            // inspectable
                             // block.
                             Box(
                                 Modifier.offset(x = width * left)
@@ -528,6 +520,26 @@ internal fun SleepChart(
                                     }
                             )
                         }
+                    current?.let { range ->
+                        listOf(range.earliestWake, range.expectedWake, range.latestWake)
+                            .filter { it >= start && it < end }
+                            .forEach { time ->
+                                val expected = time == range.expectedWake
+                                Box(
+                                    Modifier.offset(x = (width - 3.dp) * fraction(time))
+                                        .width(if (expected) 3.dp else 1.dp)
+                                        .fillMaxHeight()
+                                        .background(
+                                            if (expected) colour
+                                            else MaterialTheme.colorScheme.secondary
+                                        )
+                                        .semantics {
+                                            contentDescription =
+                                                "${if (expected) "Пробуждение" else "Граница прогноза"} ${clock(time, zone)}"
+                                        }
+                                )
+                            }
+                    }
                     if (day == today)
                         Box(
                             Modifier.offset(x = width * fraction(now))
@@ -537,6 +549,49 @@ internal fun SleepChart(
                         )
                 }
             }
+            current?.let { range ->
+                val markers =
+                    listOf(
+                            "От" to range.earliestWake,
+                            "●" to range.expectedWake,
+                            "До" to range.latestWake,
+                        )
+                        .filter { it.second >= start && it.second < end }
+                if (markers.isNotEmpty())
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 54.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        markers.forEach { (label, time) ->
+                            Text(
+                                "$label ${clock(if (label == "●") time / 300_000 * 300_000 else time, zone)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight =
+                                    if (label == "●") FontWeight.Bold else FontWeight.Normal,
+                                color =
+                                    if (label == "●") colour
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            listOf("Сон" to 1f, "Прогноз" to 0.25f).forEach { (label, alpha) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(
+                        Modifier.size(8.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(colour.copy(alpha = alpha))
+                    )
+                    Text(label, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            if (current != null)
+                Text("● Пробуждение", style = MaterialTheme.typography.labelSmall, color = colour)
         }
     }
 }
@@ -553,19 +608,28 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
     }
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                "Сегодня записано: ${duration(total(today))}",
-                style = MaterialTheme.typography.titleMedium,
-            )
+            SleepNumber("Сон сегодня", duration(total(today)))
             val naps =
                 sessions.count {
                     Instant.ofEpochMilli(it.startedAt).atZone(zone).let { z ->
                         z.toLocalDate() == today && z.hour in 6..17
                     }
                 }
-            Text(
-                "Дневных снов: $naps · самый долгий за сутки: ${duration(sessions.filter { (it.endedAt ?: now) > now - 86_400_000 }.maxOfOrNull { minOf(it.endedAt ?: now, now) - maxOf(it.startedAt, now - 86_400_000) } ?: 0)}"
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                SleepNumber("Дневных снов", "$naps", Modifier.weight(1f))
+                SleepNumber(
+                    "Самый долгий",
+                    duration(
+                        sessions
+                            .filter { (it.endedAt ?: now) > now - 86_400_000 }
+                            .maxOfOrNull {
+                                minOf(it.endedAt ?: now, now) -
+                                    maxOf(it.startedAt, now - 86_400_000)
+                            } ?: 0
+                    ),
+                    Modifier.weight(1f),
+                )
+            }
             Text("Длительность по дням", style = MaterialTheme.typography.titleSmall)
             repeat(7) { i ->
                 val day = today.minusDays((6 - i).toLong())
@@ -585,10 +649,6 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                     Text(duration(ms), style = MaterialTheme.typography.labelSmall)
                 }
             }
-            Text(
-                "Показано только записанное время. Сегодня день ещё не завершён; пропущенные записи уменьшают итог.",
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
     }
 }
@@ -645,102 +705,92 @@ internal fun NextSleepCard(
     current: CurrentSleepEstimate? = null,
 ) {
     OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(
-                if (sleeping) "Прогноз текущего сна" else "Следующий сон",
+                if (sleeping) "Пробуждение" else "Следующий сон",
                 style = MaterialTheme.typography.titleMedium,
             )
-            val next = estimate
-            if (sleeping) {
-                if (current == null) {
-                    Text(
-                        "Изучаем продолжительность сна",
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
-                    Text(
-                        "Для оценки нужен хотя бы один завершённый сон того же типа. Дневные и ночные записи оцениваем отдельно."
-                    )
-                } else {
-                    Text(
-                        if (current.night) "Ночной сон" else "Дневной сон",
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Text(
-                        "Около ${duration(current.expectedWake - current.startedAt)} всего",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    if (
-                        current.latestWake - current.earliestWake <=
-                            (if (current.night) 4 else 2) * 3_600_000L
-                    ) {
-                        Text(
-                            "Обычное окно: ${wakeClock(current.earliestWake, now, zone)} – ${wakeClock(current.latestWake, now, zone)}"
-                        )
-                    } else {
-                        Text("Продолжительность сильно меняется — узкого окна пока нет.")
-                    }
-                    Text(
-                        "Ориентир: ${wakeClock(current.expectedWake / 300_000 * 300_000, now, zone)}"
-                    )
-                    if (now < current.expectedWake) {
-                        Text("Осталось примерно ${duration(current.expectedWake - now)}")
-                    } else {
-                        Text(
-                            "Спит дольше обычного ориентира — точное время пробуждения пока неизвестно."
-                        )
-                    }
-                    Text(
-                        "Предварительная оценка · похожих записей: ${current.samples}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    if (current.night)
-                        Text(
-                            "До следующего записанного пробуждения; ночные пробуждения могут разделять ночь на несколько снов.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                }
-            } else if (next == null) {
-                Text("Изучаем её ритм", style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    "Записывайте начало и конец сна. Для первого прогноза нужен завершённый период бодрствования между двумя снами. После долгого перерыва проверьте пропущенные записи."
-                )
+            val expected = if (sleeping) current?.expectedWake else estimate?.expected
+            val earliest = if (sleeping) current?.earliestWake else estimate?.earliest
+            val latest = if (sleeping) current?.latestWake else estimate?.latest
+            if (expected == null || earliest == null || latest == null) {
+                Text("— : —", style = MaterialTheme.typography.displaySmall)
+                Text("Мало записей", style = MaterialTheme.typography.labelMedium)
             } else {
                 Text(
-                    "${clock(next.earliest, zone)} – ${clock(next.latest, zone)}",
-                    style = MaterialTheme.typography.headlineMedium,
+                    wakeClock(expected / 300_000 * 300_000, now, zone),
+                    style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
                 )
-                Text(
-                    "Ориентир: ${clock((next.expected / 300_000) * 300_000, zone)} · ${if (next.preliminary) "предварительная оценка" else "вероятный интервал ≈80%"}"
-                )
-                if (now > next.latest)
-                    Text(
-                        "Ожидаемое окно уже прошло. Возможно, сон ещё не записан?",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                Text(
-                    "${next.model} · наблюдений: ${next.samples}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                next.medianErrorMinutes?.let {
-                    Text(
-                        "Медианная ошибка прошлых прогнозов: ${it.toInt()} мин",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                next.coverage?.let {
-                    Text(
-                        "В прошлые интервалы попало ${(it * 100).toInt()}% наблюдений",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                PredictionRange(earliest, expected, latest, now, zone)
+                if (sleeping && current != null) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    ) {
+                        SleepNumber(
+                            "Всего",
+                            duration(expected - current.startedAt),
+                            Modifier.weight(1f),
+                        )
+                        SleepNumber(
+                            if (now <= expected) "Осталось" else "Сверх прогноза",
+                            duration(kotlin.math.abs(expected - now)),
+                            Modifier.weight(1f),
+                        )
+                    }
                 }
             }
-            Text(
-                "Это ориентир, а не расписание. Признаки сонливости важнее часов; в первые месяцы ритм особенно изменчив.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        }
+    }
+}
+
+@Composable
+private fun SleepNumber(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun PredictionRange(earliest: Long, expected: Long, latest: Long, now: Long, zone: ZoneId) {
+    val position =
+        ((expected - earliest).toFloat() / (latest - earliest).coerceAtLeast(1)).coerceIn(0f, 1f)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().height(16.dp)) {
+            Box(
+                Modifier.fillMaxWidth()
+                    .height(8.dp)
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
             )
+            Box(
+                Modifier.width(2.dp).fillMaxHeight().background(MaterialTheme.colorScheme.secondary)
+            )
+            Box(
+                Modifier.align(Alignment.CenterEnd)
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.secondary)
+            )
+            Box(
+                Modifier.offset(x = (maxWidth - 4.dp) * position)
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(wakeClock(earliest, now, zone), style = MaterialTheme.typography.labelLarge)
+            Text(wakeClock(latest, now, zone), style = MaterialTheme.typography.labelLarge)
         }
     }
 }

@@ -142,6 +142,57 @@ class SleepChartScreenshotTest {
                             zone,
                             7,
                             {},
+                            CurrentSleepEstimate(
+                                start,
+                                start + 9 * 3_600_000L,
+                                start + 11 * 3_600_000L,
+                                start + 14 * 3_600_000L,
+                                5,
+                                true,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun nightDashboard_broadWindow() =
+        paparazzi.snapshot {
+            BabyTheme {
+                val start =
+                    LocalDate.of(2026, 10, 15).atTime(20, 0).atZone(zone).toInstant().toEpochMilli()
+                val now = start + 3_600_000L
+                val range =
+                    CurrentSleepEstimate(
+                        start,
+                        start + 77 * 60_000L,
+                        start + 743 * 60_000L,
+                        start + 953 * 60_000L,
+                        5,
+                        true,
+                    )
+                Surface {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        NextSleepCard(null, true, now, zone, range)
+                        SleepChart(
+                            listOf(
+                                BabyEvent(
+                                    type = EventType.SLEEP,
+                                    detail = "BACK",
+                                    startedAt = start,
+                                    sleepRecordVersion = 1,
+                                )
+                            ),
+                            listOf(ForecastSleep(now, range.expectedWake, 30)),
+                            now,
+                            zone,
+                            3,
+                            {},
+                            range,
                         )
                     }
                 }

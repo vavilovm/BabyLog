@@ -67,9 +67,16 @@ seven-day recency half-life and circular time-of-day similarity. One matching
 session is enough for a clearly preliminary estimate; no matching history means
 no invented duration. The active session never trains its own estimate.
 
-For night sleeps, separate short episodes (under three hours) from longer sleeps,
-using the group containing the personal weighted median. This avoids a window
-spanning brief night wakings and consolidated overnight sleep. The descriptive
+For night sleeps, learn the personal bedtime and morning wake from longer sleeps
+(at least three hours). A first sleep starting at or after the usual bedtime uses
+that overnight history even if short evening sleeps are more numerous. An earlier
+evening sleep can switch to that pattern once it continues into the learned
+bedtime and outlasts typical short episodes. A completed overnight sleep in the
+same noon-to-noon night keeps later returns to sleep in the short-episode context.
+Overnight wake estimates use historical local morning wake times, so a later
+bedtime does not automatically shift morning wake equally late; timestamp
+subtraction still measures the real remaining duration across DST. Other night
+contexts select the duration group containing the personal weighted median. The descriptive
 window uses weighted 20th–80th percentiles, with a minimum half-width of 10 minutes
 for naps and 30 minutes for nights; no proportional padding is added. This is a
 typical-history range, not a calibrated probability interval. The UI always shows the full range as a visual band with an expected-wake marker,
@@ -77,7 +84,7 @@ including when the range is broad. The graph marks both bounds and the expected
 wake and includes tomorrow when the upper bound extends into it. Central wake times are rounded
 to five minutes.
 
-Keep the estimate anchored to sleep onset when the clock advances; if it passes,
+Within the selected sleep context, keep the estimate anchored when the clock advances; if it passes,
 explain that sleep has exceeded the rough estimate. Night estimates refer to the
 next recorded wake, not the total of multiple sleeps interrupted by night wakings.
 All elapsed durations use timestamps, including across daylight-saving changes.

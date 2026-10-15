@@ -171,31 +171,89 @@ object SleepPredictor {
         active: BabyEvent,
         completed: List<BabyEvent>,
         zone: ZoneId,
+        now: Long,
     ): CurrentSleepEstimate? {
         val night = isNight(active.startedAt, zone)
         val hour = Instant.ofEpochMilli(active.startedAt).atZone(zone).toLocalTime()
         val angle = (hour.hour + hour.minute / 60.0) * PI / 12
+        fun nightDay(time: Long): LocalDate {
+            val local = Instant.ofEpochMilli(time).atZone(zone)
+            return local.toLocalDate().let { if (local.hour < 12) it.minusDays(1) else it }
+        }
+        fun nightMinute(time: Long): Double {
+            val local = Instant.ofEpochMilli(time).atZone(zone)
+            return (local.hour * 60 + local.minute + if (local.hour < 12) 1440 else 0).toDouble()
+        }
+        fun recency(event: BabyEvent) =
+            exp(-ln(2.0) * (active.startedAt - event.startedAt).toDouble() / (7 * DAY))
+        val history =
+            completed.filter {
+                it.endedAt!! <= active.startedAt &&
+                    it.startedAt >= active.startedAt - 28 * DAY &&
+                    isNight(it.startedAt, zone) == night
+            }
+        val overnight = history.filter { it.endedAt!! - it.startedAt >= 180 * MINUTE }
+        val alreadyHadOvernight =
+            overnight.any { nightDay(it.startedAt) == nightDay(active.startedAt) }
+        val bedtime =
+            overnight
+                .takeIf { it.isNotEmpty() }
+                ?.let { weightedMedian(it.map { e -> nightMinute(e.startedAt) to recency(e) }) }
+        val shortEpisodes = history.filter { it.endedAt!! - it.startedAt < 180 * MINUTE }
+        val typicalShortMinutes =
+            shortEpisodes
+                .takeIf { it.isNotEmpty() }
+                ?.let {
+                    weightedMedian(
+                        it.map { e ->
+                            (e.endedAt!! - e.startedAt).toDouble() / MINUTE to recency(e)
+                        }
+                    )
+                } ?: 45.0
+        val continuedIntoBedtime =
+            bedtime != null &&
+                (nightDay(now) > nightDay(active.startedAt) || nightMinute(now) >= bedtime - 30) &&
+                now - active.startedAt >= max(45.0, typicalShortMinutes * 1.25) * MINUTE
+        val firstOvernight =
+            night &&
+                !alreadyHadOvernight &&
+                bedtime != null &&
+                (nightMinute(active.startedAt) >= bedtime - 30 || continuedIntoBedtime)
         val candidates =
-            completed
-                .filter {
-                    it.endedAt!! <= active.startedAt &&
-                        it.startedAt >= active.startedAt - 28 * DAY &&
-                        isNight(it.startedAt, zone) == night
-                }
-                .map {
-                    val time = Instant.ofEpochMilli(it.startedAt).atZone(zone).toLocalTime()
-                    val otherAngle = (time.hour + time.minute / 60.0) * PI / 12
-                    val recency =
-                        exp(-ln(2.0) * (active.startedAt - it.startedAt).toDouble() / (7 * DAY))
-                    val similarity = exp(2.0 * (cos(angle - otherAngle) - 1))
-                    (it.endedAt!! - it.startedAt).toDouble() / MINUTE to recency * similarity
-                }
+            (if (firstOvernight) overnight else history).mapNotNull {
+                val time = Instant.ofEpochMilli(it.startedAt).atZone(zone).toLocalTime()
+                val otherAngle = (time.hour + time.minute / 60.0) * PI / 12
+                val similarity = exp(2.0 * (cos(angle - otherAngle) - 1))
+                val duration =
+                    if (firstOvernight) {
+                        // A late bedtime should not push the learned morning wake forward by the
+                        // same amount.
+                        val end = Instant.ofEpochMilli(it.endedAt!!).atZone(zone)
+                        val dayOffset =
+                            java.time.temporal.ChronoUnit.DAYS.between(
+                                nightDay(it.startedAt),
+                                end.toLocalDate(),
+                            )
+                        val projectedWake =
+                            nightDay(active.startedAt)
+                                .plusDays(dayOffset)
+                                .atTime(end.toLocalTime())
+                                .atZone(zone)
+                                .toInstant()
+                                .toEpochMilli()
+                        projectedWake - active.startedAt
+                    } else it.endedAt!! - it.startedAt
+                if (duration <= 0) null
+                else duration.toDouble() / MINUTE to recency(it) * similarity
+            }
         if (candidates.isEmpty()) return null
         // Night waking episodes and consolidated overnight sleeps form different duration modes.
         // Use the mode containing the personal weighted median rather than spanning both modes.
         val baseline = weightedMedian(candidates)
         val durations =
-            if (night) candidates.filter { (it.first >= 180) == (baseline >= 180) } else candidates
+            if (night && !firstOvernight)
+                candidates.filter { (it.first >= 180) == (baseline >= 180) }
+            else candidates
         fun quantile(fraction: Double): Double {
             var accumulated = 0.0
             val threshold = durations.sumOf { it.second } * fraction
@@ -244,7 +302,7 @@ object SleepPredictor {
         sessions
             .firstOrNull { it.endedAt == null }
             ?.let { active ->
-                val current = currentSleep(active, completed, zone)
+                val current = currentSleep(active, completed, zone, now)
                 val projection =
                     current
                         ?.takeIf { it.expectedWake > now }
@@ -369,8 +427,23 @@ object SleepPredictor {
                                 exp(-ln(2.0) * (now - it.startedAt).toDouble() / (7 * DAY))
                         }
                 if (durations.isEmpty()) return@repeat
+                val overnightWake =
+                    if (isNight(start, zone))
+                        currentSleep(
+                                BabyEvent(
+                                    type = EventType.SLEEP,
+                                    detail = "BACK",
+                                    startedAt = start,
+                                    sleepRecordVersion = 1,
+                                ),
+                                completed,
+                                zone,
+                                start,
+                            )
+                            ?.expectedWake
+                    else null
                 val duration = weightedMedian(durations).coerceAtLeast(5.0)
-                val end = start + (duration * MINUTE).toLong()
+                val end = overnightWake ?: (start + (duration * MINUTE).toLong())
                 forecast += ForecastSleep(start, end, (radius * sqrt(index + 1.0)).toInt())
                 val synthetic =
                     BabyEvent(

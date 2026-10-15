@@ -178,11 +178,101 @@ class SleepPredictorTest {
     }
 
     @Test
+    fun lateBedtimeUsesOvernightMorningWakeDespiteMoreShortEveningSleeps() {
+        val start = base + 10 * 86_400_000L + 16 * 60 * minute // 23:00; usual bedtime 21:00.
+        val history =
+            (1..5).flatMap { day ->
+                val bedtime = start - day * 86_400_000L - 120 * minute
+                listOf(
+                    session(bedtime - 180 * minute, 30),
+                    session(bedtime - 120 * minute, 30),
+                    session(bedtime - 60 * minute, 30),
+                    session(bedtime, 660),
+                )
+            }
+        val current =
+            SleepPredictor.calculate(history + session(start).copy(endedAt = null), start, zone)
+                .current!!
+        assertEquals(
+            start + 540 * minute,
+            current.expectedWake,
+        ) // Still 08:00, not a 30-minute nap or 10:00.
+        assertEquals(5, current.samples)
+    }
+
+    @Test
+    fun upcomingNightProjectionUsesTheSameOvernightPattern() {
+        val bedtime = base + 10 * 86_400_000L + 14 * 60 * minute // 21:00.
+        val history =
+            (1..5).flatMap { day ->
+                val prior = bedtime - day * 86_400_000L
+                listOf(
+                    session(prior - 180 * minute, 30),
+                    session(prior - 120 * minute, 30),
+                    session(prior - 60 * minute, 30),
+                    session(prior, 660),
+                )
+            }
+        val today =
+            listOf(
+                session(bedtime - 180 * minute, 30),
+                session(bedtime - 120 * minute, 30),
+                session(bedtime - 60 * minute, 30),
+            )
+        val next =
+            SleepPredictor.calculate(history + today, bedtime - 30 * minute, zone).forecast.first()
+        assertEquals(bedtime, next.start)
+        assertEquals(bedtime + 660 * minute, next.end)
+    }
+
+    @Test
+    fun eveningSleepThatContinuesPastUsualBedtimeBecomesOvernight() {
+        val start = base + 10 * 86_400_000L + 12 * 60 * minute // 19:00.
+        val history =
+            (1..5).flatMap { day ->
+                val evening = start - day * 86_400_000L
+                listOf(session(evening, 30), session(evening + 120 * minute, 660))
+            }
+        val events = history + session(start).copy(endedAt = null)
+        assertEquals(
+            start + 30 * minute,
+            SleepPredictor.calculate(events, start, zone).current!!.expectedWake,
+        )
+        assertEquals(
+            start + 780 * minute,
+            SleepPredictor.calculate(events, start + 240 * minute, zone).current!!.expectedWake,
+        )
+        assertEquals(
+            start + 780 * minute,
+            SleepPredictor.calculate(events, start + 20 * 60 * minute, zone).current!!.expectedWake,
+        )
+    }
+
+    @Test
+    fun returnToSleepAfterOvernightWakeUsesShortEpisodePattern() {
+        val start = base + 10 * 86_400_000L - 3 * 60 * minute // 04:00.
+        val history =
+            (1..5).flatMap { day ->
+                val wake = start - day * 86_400_000L
+                listOf(session(wake - 420 * minute, 360), session(wake, 45))
+            }
+        val sameNight = session(start - 420 * minute, 360)
+        val current =
+            SleepPredictor.calculate(
+                    history + sameNight + session(start).copy(endedAt = null),
+                    start,
+                    zone,
+                )
+                .current!!
+        assertEquals(start + 45 * minute, current.expectedWake)
+    }
+
+    @Test
     fun shortNightEpisodesKeepTheirOwnDurationMode() {
         val start = base + 10 * 86_400_000L + 14 * 60 * minute
         val active = session(start).copy(endedAt = null)
         val short = (1..5).map { session(start - it * 86_400_000L, 45) }
-        val long = session(start - 6 * 86_400_000L, 660)
+        val long = session(start - 6 * 86_400_000L + 120 * minute, 660)
         assertEquals(
             start + 45 * minute,
             SleepPredictor.calculate(short + long + active, start, zone).current!!.expectedWake,
@@ -210,7 +300,7 @@ class SleepPredictorTest {
     }
 
     @Test
-    fun nightDurationUsesElapsedTimeAcrossDst() {
+    fun overnightWakeKeepsLocalMorningTimeAcrossDst() {
         val historicalStart =
             ZonedDateTime.of(2026, 10, 25, 1, 30, 0, 0, zone).toInstant().toEpochMilli()
         val historicalEnd =
@@ -224,7 +314,7 @@ class SleepPredictorTest {
                     zone,
                 )
                 .current!!
-        assertEquals(start + 180 * minute, result.expectedWake)
+        assertEquals(start + 120 * minute, result.expectedWake)
     }
 
     @Test

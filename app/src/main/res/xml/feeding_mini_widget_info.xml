@@ -1,1 +1,9 @@
-<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android" android:minWidth="180dp" android:minHeight="60dp" android:updatePeriodMillis="1800000" android:initialLayout="@layout/glance_default_loading_layout" android:previewLayout="@layout/widget_preview_sleep" android:description="@string/widget_feeding_mini_description" android:resizeMode="horizontal" android:widgetCategory="home_screen" />
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="56dp" android:minHeight="56dp"
+    android:targetCellWidth="1" android:targetCellHeight="1"
+    android:minResizeWidth="56dp" android:minResizeHeight="56dp"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:previewLayout="@layout/widget_preview_mini"
+    android:description="@string/widget_feeding_mini_description"
+    android:resizeMode="none" android:widgetCategory="home_screen" />

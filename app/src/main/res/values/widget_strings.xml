@@ -1,10 +1,10 @@
 <resources>
-    <string name="widget_feeding_name">Сон · полный</string>
-    <string name="widget_feeding_description">Начало сна и пробуждение</string>
-    <string name="widget_sleep_name">Сон · полный</string>
-    <string name="widget_sleep_description">Начало сна и пробуждение</string>
-    <string name="widget_feeding_horizontal_name">Сон · горизонтальный</string>
-    <string name="widget_feeding_horizontal_description">Компактный учёт сна в одну строку</string>
-    <string name="widget_feeding_mini_name">Сон · мини</string>
-    <string name="widget_feeding_mini_description">Быстрый учёт сна</string>
+    <string name="widget_feeding_name">Сон · день</string>
+    <string name="widget_feeding_description">Сон за сегодня, текущее состояние и следующий сон · 4 × 3</string>
+    <string name="widget_sleep_name">Сон · карточка</string>
+    <string name="widget_sleep_description">Текущее состояние и примерное окно следующего сна · 3 × 2</string>
+    <string name="widget_feeding_horizontal_name">Сон · строка</string>
+    <string name="widget_feeding_horizontal_description">Состояние и кнопка начала сна или пробуждения · 4 × 1</string>
+    <string name="widget_feeding_mini_name">Сон · квадрат</string>
+    <string name="widget_feeding_mini_description">Одно касание для начала сна или пробуждения · 1 × 1</string>
 </resources>

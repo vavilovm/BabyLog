@@ -11,9 +11,9 @@ import androidx.glance.appwidget.*
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.provideContent
+import androidx.glance.color.ColorProvider
 import androidx.glance.layout.*
 import androidx.glance.text.*
-import androidx.glance.unit.ColorProvider
 import com.mark.babylog.BabyLogApp
 import com.mark.babylog.MainActivity
 import com.mark.babylog.data.*
@@ -21,7 +21,13 @@ import com.mark.babylog.sync.AppSurfaceSync
 
 data class WidgetButton(val label: String, val command: String, val imageRes: Int? = null)
 
-data class WidgetUi(val title: String, val status: String, val buttons: List<WidgetButton>)
+data class WidgetUi(
+    val title: String,
+    val status: String,
+    val buttons: List<WidgetButton>,
+    val prediction: String? = null,
+    val summary: String? = null,
+)
 
 fun feedingWidgetUi(last: BabyEvent?, now: Long): WidgetUi {
     val buttons =
@@ -61,8 +67,14 @@ fun sleepWidgetUi(last: BabyEvent?, now: Long): WidgetUi {
 private suspend fun sleepSurfaceUi(context: Context): WidgetUi {
     val d = dao(context)
     val now = System.currentTimeMillis()
-    val ui = sleepWidgetUi(d.activeSleep() ?: d.lastSleep(), now)
-    if (d.activeSleep() != null) return ui
+    val active = d.activeSleep()
+    val zone = java.time.ZoneId.systemDefault()
+    val start = java.time.LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
+    val records = d.sleepSnapshot(start)
+    val ui =
+        sleepWidgetUi(active ?: d.lastSleep(), now)
+            .copy(summary = dailySleepSummary(records, start, now))
+    if (active != null) return ui
     val next =
         com.mark.babylog.sleep.SleepPredictor.calculate(
                 d.sleepSnapshot(now - 32L * 86_400_000),
@@ -70,18 +82,16 @@ private suspend fun sleepSurfaceUi(context: Context): WidgetUi {
                 profile = d.profile(),
             )
             .next ?: return ui
-    val zone = java.time.ZoneId.systemDefault()
     val format = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
     fun time(t: Long) = java.time.Instant.ofEpochMilli(t).atZone(zone).format(format)
     return ui.copy(
-        status =
+        prediction =
             if (now > next.latest) "Окно сна прошло · проверьте журнал"
             else "Сон ≈ ${time(next.earliest)}–${time(next.latest)}"
     )
 }
 
 private val kindKey = ActionParameters.Key<String>("kind")
-private val surfaceKey = ActionParameters.Key<String>("surface")
 
 private fun dao(context: Context) = (context.applicationContext as BabyLogApp).database.events()
 
@@ -109,16 +119,16 @@ class SleepAction : ActionCallback {
         if (parameters[kindKey] == "WAKE") app.repository.finishSleep()
         else app.repository.beginSleep()
         app.familySync.schedule()
-        AppSurfaceSync.refreshFromWidget(context, glanceId, SleepWidget())
+        AppSurfaceSync.refresh(context)
     }
 }
 
 class FeedingWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Exact
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val d = dao(context)
-        val now = System.currentTimeMillis()
         val ui = sleepSurfaceUi(context)
-        provideContent { StandardWidgetBox(ui, SleepAction::class.java, "sleep") }
+        provideContent { SleepCard(ui, showSummary = true) }
     }
 }
 
@@ -127,11 +137,11 @@ class FeedingWidgetReceiver : GlanceAppWidgetReceiver() {
 }
 
 class SleepWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Exact
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val d = dao(context)
-        val now = System.currentTimeMillis()
         val ui = sleepSurfaceUi(context)
-        provideContent { StandardWidgetBox(ui, SleepAction::class.java, "sleep") }
+        provideContent { SleepCard(ui, showSummary = false) }
     }
 }
 
@@ -141,10 +151,8 @@ class SleepWidgetReceiver : GlanceAppWidgetReceiver() {
 
 class FeedingHorizontalWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val d = dao(context)
-        val now = System.currentTimeMillis()
         val ui = sleepSurfaceUi(context)
-        provideContent { HorizontalWidgetBox(ui, SleepAction::class.java) }
+        provideContent { SleepStrip(ui) }
     }
 }
 
@@ -155,7 +163,7 @@ class FeedingHorizontalWidgetReceiver : GlanceAppWidgetReceiver() {
 class FeedingMiniWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val ui = sleepSurfaceUi(context)
-        provideContent { MiniWidgetBox(ui.buttons, SleepAction::class.java) }
+        provideContent { SleepSquare(ui) }
     }
 }
 
@@ -163,107 +171,155 @@ class FeedingMiniWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget = FeedingMiniWidget()
 }
 
+// Neutral surfaces and a single teal accent stay legible in both launcher themes.
+private val cardColor = ColorProvider(Color(0xFFF8FAF9), Color(0xFF172421))
+private val inkColor = ColorProvider(Color(0xFF183C35), Color(0xFFE7F3EE))
+private val mutedColor = ColorProvider(Color(0xFF536C64), Color(0xFFA9C1B7))
+private val accentColor = ColorProvider(Color(0xFF246B59), Color(0xFF92D6BC))
+private val actionInk = ColorProvider(Color.White, Color(0xFF123C30))
+
 @Composable
-private fun StandardWidgetBox(ui: WidgetUi, action: Class<out ActionCallback>, surface: String) {
+private fun SleepCard(ui: WidgetUi, showSummary: Boolean) {
+    val height = LocalSize.current.height
     Column(
         GlanceModifier.fillMaxSize()
-            .background(ColorProvider(Color(0xFFF4EFF7)))
+            .appWidgetBackground()
+            .background(cardColor)
+            .cornerRadius(24.dp)
             .clickable(actionStartActivity<MainActivity>())
-            .padding(12.dp)
+            .padding(16.dp)
     ) {
-        WidgetHeader(ui)
-        Row(GlanceModifier.fillMaxWidth()) {
-            WidgetButton(ui.buttons[0], action, GlanceModifier.defaultWeight(), surface)
-            Spacer(GlanceModifier.width(8.dp))
-            WidgetButton(ui.buttons[1], action, GlanceModifier.defaultWeight(), surface)
+        Caption(if (showSummary) "BABYLOG · СЕГОДНЯ" else "BABYLOG · СОН")
+        Spacer(GlanceModifier.height(8.dp))
+        Text(
+            ui.status,
+            style = TextStyle(color = inkColor, fontWeight = FontWeight.Bold, fontSize = 20.sp),
+            maxLines = 2,
+        )
+        if (height >= 180.dp) {
+            Spacer(GlanceModifier.height(8.dp))
+            Caption(
+                ui.prediction
+                    ?: if (ui.buttons.first().command == "WAKE") "Тихого сна малышу"
+                    else "Новый сон — одним касанием"
+            )
         }
-        if (ui.buttons.size > 2) {
-            Spacer(GlanceModifier.height(7.dp))
-            WidgetButton(ui.buttons[2], action, GlanceModifier.fillMaxWidth(), surface)
+        if (showSummary && height >= 240.dp) {
+            Spacer(GlanceModifier.height(16.dp))
+            Caption("СОН ЗА СЕГОДНЯ")
+            Text(
+                ui.summary ?: "Пока нет записей",
+                style = TextStyle(color = inkColor, fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                maxLines = 2,
+            )
         }
+        Spacer(GlanceModifier.defaultWeight())
+        SleepButton(ui.buttons.first(), GlanceModifier.fillMaxWidth())
     }
 }
 
 @Composable
-private fun HorizontalWidgetBox(ui: WidgetUi, action: Class<out ActionCallback>) {
-    Column(
-        GlanceModifier.fillMaxSize()
-            .background(ColorProvider(Color(0xFFF4EFF7)))
-            .clickable(actionStartActivity<MainActivity>())
-            .padding(12.dp)
-    ) {
-        WidgetHeader(ui)
-        Row(GlanceModifier.fillMaxWidth()) {
-            ui.buttons.forEachIndexed { index, item ->
-                if (index > 0) Spacer(GlanceModifier.width(7.dp))
-                WidgetButton(item, action, GlanceModifier.defaultWeight(), "horizontal")
-            }
-        }
-    }
-}
-
-@Composable
-private fun MiniWidgetBox(buttons: List<WidgetButton>, action: Class<out ActionCallback>) {
+private fun SleepStrip(ui: WidgetUi) {
     Row(
         GlanceModifier.fillMaxSize()
-            .background(ColorProvider(Color(0xFFF4EFF7)))
+            .appWidgetBackground()
+            .background(cardColor)
+            .cornerRadius(24.dp)
             .clickable(actionStartActivity<MainActivity>())
-            .padding(8.dp),
+            .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        buttons.forEachIndexed { index, item ->
-            if (index > 0) Spacer(GlanceModifier.width(6.dp))
-            WidgetButton(item, action, GlanceModifier.defaultWeight(), "mini")
+        Column(GlanceModifier.defaultWeight()) {
+            Caption("BABYLOG · СОН")
+            Text(
+                ui.status,
+                style = TextStyle(color = inkColor, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                maxLines = 2,
+            )
         }
+        Spacer(GlanceModifier.width(10.dp))
+        SleepButton(ui.buttons.first(), GlanceModifier.width(112.dp))
     }
 }
 
 @Composable
-private fun WidgetHeader(ui: WidgetUi) {
-    Text(ui.title, style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 18.sp))
-    Text(ui.status, style = TextStyle(fontSize = 13.sp))
-    Spacer(GlanceModifier.height(6.dp))
+private fun SleepSquare(ui: WidgetUi) {
+    val item = ui.buttons.first()
+    // The entire 1 × 1 tile is the action; no padded button inside another box.
+    Column(
+        GlanceModifier.fillMaxSize()
+            .appWidgetBackground()
+            .background(accentColor)
+            .cornerRadius(24.dp)
+            .clickable(actionRunCallback<SleepAction>(actionParametersOf(kindKey to item.command)))
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            if (item.command == "WAKE") "☀" else "☾",
+            style = TextStyle(color = actionInk, fontSize = 24.sp),
+        )
+        Text(
+            item.label,
+            style =
+                TextStyle(
+                    color = actionInk,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                ),
+            maxLines = 2,
+        )
+    }
 }
 
 @Composable
-private fun WidgetButton(
-    item: WidgetButton,
-    action: Class<out ActionCallback>,
-    modifier: GlanceModifier,
-    surface: String,
-) {
+private fun Caption(value: String) {
+    Text(value, style = TextStyle(color = mutedColor, fontSize = 12.sp), maxLines = 2)
+}
+
+@Composable
+private fun SleepButton(item: WidgetButton, modifier: GlanceModifier) {
     Box(
         modifier
-            .height(42.dp)
-            .background(ColorProvider(Color(0xFF6F579C)))
+            .height(48.dp)
+            .background(accentColor)
             .cornerRadius(16.dp)
-            .clickable(
-                actionRunCallback(
-                    action,
-                    actionParametersOf(kindKey to item.command, surfaceKey to surface),
-                )
-            ),
+            .clickable(actionRunCallback<SleepAction>(actionParametersOf(kindKey to item.command))),
         contentAlignment = Alignment.Center,
     ) {
-        if (item.imageRes != null)
-            Image(
-                ImageProvider(item.imageRes),
-                item.label.ifBlank { if (item.command == "LEFT") "Левый бок" else "Правый бок" },
-                GlanceModifier.size(38.dp),
-            )
-        else
-            Text(
-                item.label,
-                style =
-                    TextStyle(
-                        color = ColorProvider(Color.White),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                    ),
-                maxLines = 1,
-            )
+        Text(
+            item.label,
+            style =
+                TextStyle(
+                    color = actionInk,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                ),
+            maxLines = 2,
+        )
     }
+}
+
+internal fun dailySleepSummary(records: List<BabyEvent>, start: Long, now: Long): String {
+    val valid =
+        records.filter {
+            it.type == EventType.SLEEP &&
+                it.sleepRecordVersion == 1 &&
+                it.deletedAt == null &&
+                it.syncState != SyncState.CONFLICT &&
+                it.startedAt < now &&
+                (it.endedAt ?: now) > start
+        }
+    val minutes =
+        valid.sumOf {
+            ((it.endedAt ?: now).coerceAtMost(now) - it.startedAt.coerceAtLeast(start))
+                .coerceAtLeast(0)
+        } / 60_000
+    return if (valid.isEmpty()) "Пока нет записей"
+    else "${minutes / 60} ч ${minutes % 60} мин · эпизодов: ${valid.size}"
 }
 
 private fun feedLabel(v: String) =

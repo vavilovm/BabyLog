@@ -39,7 +39,7 @@ class SleepStatusDurationTest {
     }
 
     @Test
-    fun upperWakeBoundaryAddsTomorrowEvenIfExpectedWakeIsToday() {
+    fun hiddenUpperWakeBoundaryDoesNotAddEmptyTomorrowRow() {
         val zone = ZoneId.of("Europe/Amsterdam")
         val today = LocalDate.of(2026, 10, 15)
         val now = today.atTime(21, 0).atZone(zone).toInstant().toEpochMilli()
@@ -54,7 +54,15 @@ class SleepStatusDurationTest {
             )
         val days =
             sleepChartDays(listOf(ForecastSleep(now, range.expectedWake, 30)), now, zone, 7, range)
-        assertEquals(8, days.size)
-        assertEquals(today.plusDays(1), days.last())
+        assertEquals(7, days.size)
+        assertEquals(today, days.last())
+        val tomorrowWake =
+            range.copy(
+                expectedWake = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            )
+        assertEquals(
+            today.plusDays(1),
+            sleepChartDays(emptyList(), now, zone, 7, tomorrowWake).last(),
+        )
     }
 }

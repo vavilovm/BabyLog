@@ -70,8 +70,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         sync()
     }
 
-    fun saveProfile(birthday: String, dueDate: String?) = launchAction {
-        repository.saveProfile(BabyProfile(birthday = birthday, dueDate = dueDate))
+    fun saveProfile(birthday: String, dueDate: String?, rhythmZoneId: String) = launchAction {
+        repository.saveProfile(
+            BabyProfile(birthday = birthday, dueDate = dueDate, rhythmZoneId = rhythmZoneId)
+        )
         sync()
     }
 

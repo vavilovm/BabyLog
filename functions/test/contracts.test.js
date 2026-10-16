@@ -57,3 +57,13 @@ test("birthday profile rejects impossible and reversed dates", () => {
   }
   assert.throws(() => validatePayload("PROFILE_UPSERT", {birthday: "2026-07-01", dueDate: "2026-06-01", updatedAt: 10}), /Invalid birthday/);
 });
+
+
+test("profile accepts valid rhythm timezones and rejects unknown zones", () => {
+  for (const rhythmZoneId of ["Europe/Amsterdam", "America/New_York", "Asia/Tokyo", "UTC"]) {
+    validatePayload("PROFILE_UPSERT", {birthday: "2026-07-01", rhythmZoneId, updatedAt: 10});
+  }
+  for (const rhythmZoneId of ["Invalid/Zone", "", 123]) {
+    assert.throws(() => validatePayload("PROFILE_UPSERT", {birthday: "2026-07-01", rhythmZoneId, updatedAt: 10}), /Invalid rhythm timezone/);
+  }
+});

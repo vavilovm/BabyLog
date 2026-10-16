@@ -31,6 +31,7 @@ class DatabaseMigrationTest {
                     BabyLogApp.MIGRATION_3_4,
                     BabyLogApp.MIGRATION_4_5,
                     BabyLogApp.MIGRATION_5_6,
+                    BabyLogApp.MIGRATION_6_7,
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -62,6 +63,60 @@ class DatabaseMigrationTest {
             }
         } finally {
             database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
+    fun travelMigrationPreservesProfileAndCapturesInitialHomeZone() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "baby-log-profile-${UUID.randomUUID()}.db"
+        val helper =
+            FrameworkSQLiteOpenHelperFactory()
+                .create(
+                    SupportSQLiteOpenHelper.Configuration.builder(context)
+                        .name(name)
+                        .callback(
+                            object : SupportSQLiteOpenHelper.Callback(6) {
+                                override fun onCreate(db: SupportSQLiteDatabase) {
+                                    db.execSQL(
+                                        "CREATE TABLE baby_profile (id INTEGER NOT NULL PRIMARY KEY, birthday TEXT NOT NULL, dueDate TEXT, updatedAt INTEGER NOT NULL)"
+                                    )
+                                    db.execSQL(
+                                        "INSERT INTO baby_profile VALUES (1, '2026-07-01', '2026-07-15', 123)"
+                                    )
+                                }
+
+                                override fun onUpgrade(
+                                    db: SupportSQLiteDatabase,
+                                    oldVersion: Int,
+                                    newVersion: Int,
+                                ) = Unit
+                            }
+                        )
+                        .build()
+                )
+        try {
+            val db = helper.writableDatabase
+            BabyLogApp.MIGRATION_6_7.migrate(db)
+            db.query("SELECT * FROM baby_profile").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(
+                    "2026-07-01",
+                    cursor.getString(cursor.getColumnIndexOrThrow("birthday")),
+                )
+                assertEquals(
+                    "2026-07-15",
+                    cursor.getString(cursor.getColumnIndexOrThrow("dueDate")),
+                )
+                assertEquals(123L, cursor.getLong(cursor.getColumnIndexOrThrow("updatedAt")))
+                assertEquals(
+                    java.time.ZoneId.systemDefault().id,
+                    cursor.getString(cursor.getColumnIndexOrThrow("rhythmZoneId")),
+                )
+            }
+        } finally {
+            helper.close()
             context.deleteDatabase(name)
         }
     }

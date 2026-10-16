@@ -68,8 +68,16 @@ class BabyLogRepository(private val db: BabyDatabase) {
                 "Дата рождения не может быть в будущем"
             }
             profile.dueDate?.let { require(!java.time.LocalDate.parse(it).isBefore(birth)) }
-            dao.putProfile(profile)
-            enqueueProfile(profile)
+            val saved =
+                profile.copy(
+                    rhythmZoneId =
+                        profile.rhythmZoneId
+                            ?: dao.profile()?.rhythmZoneId
+                            ?: java.time.ZoneId.systemDefault().id
+                )
+            java.time.ZoneId.of(saved.rhythmZoneId!!)
+            dao.putProfile(saved)
+            enqueueProfile(saved)
         }
 
     private suspend fun enqueueProfile(profile: BabyProfile) {
@@ -82,6 +90,10 @@ class BabyLogRepository(private val db: BabyDatabase) {
                     JSONObject()
                         .put("birthday", profile.birthday)
                         .put("dueDate", profile.dueDate ?: JSONObject.NULL)
+                        .put(
+                            "rhythmZoneId",
+                            profile.rhythmZoneId ?: java.time.ZoneId.systemDefault().id,
+                        )
                         .put("updatedAt", profile.updatedAt)
                         .toString(),
             )
@@ -92,11 +104,13 @@ class BabyLogRepository(private val db: BabyDatabase) {
         db.withTransaction {
             val birthday = raw["birthday"] as? String ?: return@withTransaction
             val dueDate = raw["dueDate"] as? String
+            val rhythmZoneId = raw["rhythmZoneId"] as? String
             if (
                 runCatching {
                         val birth = java.time.LocalDate.parse(birthday)
                         require(birth <= java.time.LocalDate.now())
                         dueDate?.let { require(java.time.LocalDate.parse(it) >= birth) }
+                        rhythmZoneId?.let { java.time.ZoneId.of(it) }
                     }
                     .isFailure
             )
@@ -104,7 +118,15 @@ class BabyLogRepository(private val db: BabyDatabase) {
             val updated = (raw["updatedAt"] as? Number)?.toLong() ?: return@withTransaction
             if (adoptShared || (dao.profile()?.updatedAt ?: 0) <= updated)
                 dao.putProfile(
-                    BabyProfile(birthday = birthday, dueDate = dueDate, updatedAt = updated)
+                    BabyProfile(
+                        birthday = birthday,
+                        dueDate = dueDate,
+                        updatedAt = updated,
+                        rhythmZoneId =
+                            rhythmZoneId
+                                ?: dao.profile()?.rhythmZoneId
+                                ?: java.time.ZoneId.systemDefault().id,
+                    )
                 )
         }
 

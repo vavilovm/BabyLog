@@ -299,25 +299,13 @@ object SleepPredictor {
                 .map { it.remoteId }
                 .toSet()
         val completed = sessions.filter { it.endedAt != null }
-        sessions
-            .firstOrNull { it.endedAt == null }
-            ?.let { active ->
-                val current = currentSleep(active, completed, zone, now)
-                val projection =
-                    current
-                        ?.takeIf { it.expectedWake > now }
-                        ?.let {
-                            listOf(
-                                ForecastSleep(
-                                    now,
-                                    it.expectedWake,
-                                    ((it.latestWake - it.earliestWake) / (2 * MINUTE)).toInt(),
-                                )
-                            )
-                        } ?: emptyList()
-                return SleepPrediction(null, projection, conflicts, current)
-            }
-        val latest = completed.lastOrNull() ?: return SleepPrediction(null, emptyList(), conflicts)
+        val active = sessions.firstOrNull { it.endedAt == null }
+        // Keep one fixed clock throughout the training window and projection. A DST
+        // change moves civil labels, not the baby's learned rhythm. Once the old
+        // offset leaves the window, all training observations already use the new one.
+        val homeZone =
+            profile?.rhythmZoneId?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: zone
+        val rhythmZone = homeZone.rules.getOffset(Instant.ofEpochMilli(now - 28 * DAY))
         val samples =
             completed.zipWithNext().mapNotNull { (prior, next) ->
                 val wake = prior.endedAt!!
@@ -337,20 +325,65 @@ object SleepPredictor {
                             wake,
                             prior,
                             completed.filter { it.startedAt <= prior.startedAt },
-                            zone,
+                            rhythmZone,
                         ),
-                        phase(wake, zone),
+                        phase(wake, rhythmZone),
                     )
             }
+        val horizon =
+            Instant.ofEpochMilli(now)
+                .atZone(zone)
+                .toLocalDate()
+                .plusDays(2)
+                .atStartOfDay(zone)
+                .toInstant()
+                .toEpochMilli()
+        if (active != null) {
+            val current = currentSleep(active, completed, rhythmZone, now)
+            val forecast = mutableListOf<ForecastSleep>()
+            if (current != null && current.expectedWake > now) {
+                val radius = (current.latestWake - current.earliestWake).toDouble() / (2 * MINUTE)
+                forecast += ForecastSleep(now, current.expectedWake, radius.toInt())
+                val synthetic = active.copy(endedAt = current.expectedWake)
+                val history = completed + synthetic
+                val candidates =
+                    samples.filter { it.phase == phase(current.expectedWake, rhythmZone) }
+                if (completed.size >= 4 && candidates.isNotEmpty()) {
+                    val start =
+                        current.expectedWake +
+                            (predict(
+                                    candidates,
+                                    features(current.expectedWake, synthetic, history, rhythmZone),
+                                    now,
+                                    1,
+                                ) * MINUTE)
+                                .toLong()
+                    forecast +=
+                        projectSleeps(
+                            start,
+                            horizon,
+                            completed,
+                            samples,
+                            history,
+                            rhythmZone,
+                            now,
+                            radius,
+                            1,
+                        )
+                }
+            }
+            return SleepPrediction(null, forecast, conflicts, current)
+        }
+        val latest = completed.lastOrNull() ?: return SleepPrediction(null, emptyList(), conflicts)
         val wake = latest.endedAt!!
         if (now - wake > 12 * 60 * MINUTE) return SleepPrediction(null, emptyList(), conflicts)
-        val matched = samples.filter { it.phase == phase(wake, zone) }
+        val matched = samples.filter { it.phase == phase(wake, rhythmZone) }
         val pool =
             if (matched.size >= 3) matched
-            else samples.filter { (it.phase == 2) == (phase(wake, zone) == 2) }
+            else samples.filter { (it.phase == 2) == (phase(wake, rhythmZone) == 2) }
         val borrowedContext = matched.size < 3
         if (pool.isEmpty()) return SleepPrediction(null, emptyList(), conflicts)
-        val x = features(wake, latest, completed, zone)
+        val x = features(wake, latest, completed, rhythmZone)
         val errors = Array(3) { mutableListOf<Double>() }
         // Use a fixed chronological holdout subset shared by eligible candidate models.
         val first = if (pool.size >= 38) 30 else 3
@@ -400,72 +433,84 @@ object SleepPredictor {
                 coverageResults.takeIf { it.isNotEmpty() }?.average(),
                 !calibrated,
             )
-        val forecast = mutableListOf<ForecastSleep>()
-        // A passed estimate is kept visible, never silently shifted into the future.
-        if (expected >= now && completed.size >= 4) {
-            val dayEnd =
-                Instant.ofEpochMilli(now)
-                    .atZone(zone)
-                    .toLocalDate()
-                    .plusDays(1)
-                    .atStartOfDay(zone)
-                    .toInstant()
-                    .toEpochMilli()
-            var start = expected
-            val history = completed.toMutableList()
-            repeat(8) { index ->
-                if (start >= dayEnd) return@repeat
-                val hour = Instant.ofEpochMilli(start).atZone(zone).hour
-                val durations =
-                    completed
-                        .filter { e ->
-                            val h = Instant.ofEpochMilli(e.startedAt).atZone(zone).hour
-                            (h >= 18 || h < 5) == (hour >= 18 || hour < 5)
-                        }
-                        .map {
-                            (it.endedAt!! - it.startedAt).toDouble() / MINUTE to
-                                exp(-ln(2.0) * (now - it.startedAt).toDouble() / (7 * DAY))
-                        }
-                if (durations.isEmpty()) return@repeat
-                val overnightWake =
-                    if (isNight(start, zone))
-                        currentSleep(
-                                BabyEvent(
-                                    type = EventType.SLEEP,
-                                    detail = "BACK",
-                                    startedAt = start,
-                                    sleepRecordVersion = 1,
-                                ),
-                                completed,
-                                zone,
-                                start,
-                            )
-                            ?.expectedWake
-                    else null
-                val duration = weightedMedian(durations).coerceAtLeast(5.0)
-                val end = overnightWake ?: (start + (duration * MINUTE).toLong())
-                forecast += ForecastSleep(start, end, (radius * sqrt(index + 1.0)).toInt())
-                val synthetic =
-                    BabyEvent(
-                        type = EventType.SLEEP,
-                        detail = "BACK",
-                        startedAt = start,
-                        endedAt = end,
-                        sleepRecordVersion = 1,
-                    )
-                history += synthetic
-                val candidates = samples.filter { it.phase == phase(end, zone) }
-                if (candidates.isEmpty()) {
-                    start = dayEnd
-                    return@repeat
-                }
-                start =
-                    end +
-                        (predict(candidates, features(end, synthetic, history, zone), now, 1) *
-                                MINUTE)
-                            .toLong()
-            }
-        }
+        // A passed estimate stays anchored to the real wake; never slide it forward.
+        val forecast =
+            if (expected >= now && completed.size >= 4)
+                projectSleeps(
+                    expected,
+                    horizon,
+                    completed,
+                    samples,
+                    completed,
+                    rhythmZone,
+                    now,
+                    radius,
+                )
+            else emptyList()
         return SleepPrediction(result, forecast, conflicts)
+    }
+
+    private fun projectSleeps(
+        firstStart: Long,
+        horizon: Long,
+        completed: List<BabyEvent>,
+        samples: List<Sample>,
+        initialHistory: List<BabyEvent>,
+        zone: ZoneId,
+        now: Long,
+        radius: Double,
+        precedingSleeps: Int = 0,
+    ): List<ForecastSleep> {
+        val forecast = mutableListOf<ForecastSleep>()
+        var start = firstStart
+        val history = initialHistory.toMutableList()
+        // Bound work even for very short personal sleep/wake cycles.
+        repeat(32) { index ->
+            if (start >= horizon) return forecast
+            val durations =
+                completed
+                    .filter { isNight(it.startedAt, zone) == isNight(start, zone) }
+                    .map {
+                        (it.endedAt!! - it.startedAt).toDouble() / MINUTE to
+                            exp(-ln(2.0) * (now - it.startedAt).toDouble() / (7 * DAY))
+                    }
+            if (durations.isEmpty()) return forecast
+            val overnightWake =
+                if (isNight(start, zone))
+                    currentSleep(
+                            BabyEvent(
+                                type = EventType.SLEEP,
+                                detail = "BACK",
+                                startedAt = start,
+                                sleepRecordVersion = 1,
+                            ),
+                            completed,
+                            zone,
+                            start,
+                        )
+                        ?.expectedWake
+                else null
+            val end =
+                overnightWake
+                    ?: (start + (weightedMedian(durations).coerceAtLeast(5.0) * MINUTE).toLong())
+            forecast +=
+                ForecastSleep(start, end, (radius * sqrt(index + precedingSleeps + 1.0)).toInt())
+            val synthetic =
+                BabyEvent(
+                    type = EventType.SLEEP,
+                    detail = "BACK",
+                    startedAt = start,
+                    endedAt = end,
+                    sleepRecordVersion = 1,
+                )
+            history += synthetic
+            val candidates = samples.filter { it.phase == phase(end, zone) }
+            if (candidates.isEmpty()) return forecast
+            start =
+                end +
+                    (predict(candidates, features(end, synthetic, history, zone), now, 1) * MINUTE)
+                        .toLong()
+        }
+        return forecast
     }
 }

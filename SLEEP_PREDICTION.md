@@ -34,7 +34,7 @@ sleep problems. It does not use an LLM or send sleep records to an AI service.
   evening context is sparse, borrow other daytime observations and keep the
   estimate preliminary; never borrow daytime observations for overnight returns.
 - Fit weighted personal medians, time-of-day medians, and ridge regression. Weight
-  observations with a seven-day half-life. Regression uses cyclical local time,
+  observations with a seven-day half-life. Regression uses cyclical rhythm time,
   preceding sleep duration, number of earlier sleeps that day, and prior 24-hour
   recorded sleep. Those features use only information available at the forecast.
 - Regression requires 30 earlier intervals to train and eight later observations
@@ -53,10 +53,13 @@ sleep problems. It does not use an LLM or send sleep records to an AI service.
   precise estimate.
 - Every new start, wake, edit, deletion, profile change, or sync emission recomputes
   the result. An estimate that passes remains anchored to the recorded wake.
-- Project the remaining day using personal sleep durations and awake intervals,
+- Project through the end of tomorrow using personal sleep durations and awake intervals,
   with uncertainty increasing as the square root of the number of projected
   sleeps. These are tentative projections rather than separately calibrated
-  whole-day prediction intervals.
+  whole-day prediction intervals. During an active sleep, continue from its expected
+  wake, without using synthetic sleeps as training samples or changing the current
+  sleep estimate. Stop if matching history is missing or the current estimate has
+  already passed. Projected sleeps never contribute to recorded totals.
 
 ## Ongoing sleep duration
 
@@ -73,15 +76,16 @@ that overnight history even if short evening sleeps are more numerous. An earlie
 evening sleep can switch to that pattern once it continues into the learned
 bedtime and outlasts typical short episodes. A completed overnight sleep in the
 same noon-to-noon night keeps later returns to sleep in the short-episode context.
-Overnight wake estimates use historical local morning wake times, so a later
+Overnight wake estimates use historical morning wake times on the rhythm clock, so a later
 bedtime does not automatically shift morning wake equally late; timestamp
 subtraction still measures the real remaining duration across DST. Other night
 contexts select the duration group containing the personal weighted median. The descriptive
 window uses weighted 20th–80th percentiles, with a minimum half-width of 10 minutes
 for naps and 30 minutes for nights; no proportional padding is added. This is a
-typical-history range, not a calibrated probability interval. The UI always shows the full range as a visual band with an expected-wake marker,
-including when the range is broad. The graph marks both bounds and the expected
-wake and includes tomorrow when the upper bound extends into it. Central wake times are rounded
+typical-history range, not a calibrated probability interval. The prediction card
+shows the full range. The rhythm graph shows only the expected-wake marker and
+its time; it does not draw the range or its bounds. Tomorrow is included when a
+forecast or expected-wake marker is on that day. Central wake labels are rounded
 to five minutes.
 
 Within the selected sleep context, keep the estimate anchored when the clock advances; if it passes,
@@ -91,6 +95,37 @@ All elapsed durations use timestamps, including across daylight-saving changes.
 The graph draws the remaining projected sleep from now to the estimated wake
 using the forecast style and appends tomorrow when a projection overlaps that day.
 No future sleep is counted in recorded totals.
+
+## Clock changes and travel
+
+The shared profile stores `rhythmZoneId`, an IANA home timezone. New profiles use
+this device's zone; database migration 6→7 captures the zone on upgrade. Existing
+profiles received from older clients preserve the local saved zone when the
+field is absent. The profile editor lets parents correct the home zone, including
+when the upgrade happens after travel. Keep it at home while travelling; changing
+the device timezone must not move the baby's predictions by the travel offset.
+
+All circadian features, phase matching, nap counts used as features, night grouping,
+and historical morning-wake projection use one fixed offset from the home zone
+at the beginning of the 28-day training window. A seasonal clock change therefore
+changes displayed clock labels without instantly changing the learned rhythm.
+The model learns adjustment from actual new records with its existing recency
+weights; no automatic jet-lag correction or forced adaptation schedule is added.
+When the old offset leaves the window, the remaining observations already fall
+under the new offset. Current-sleep classification can still change based on
+observed sleep continuing into usual bedtime, as before.
+
+Graphs, date grouping, editors and recorded daily totals use the device's current
+civil timezone, shown above the graph. Travel re-renders history in that zone;
+original recording-zone labels are not stored per event. Timestamps remain UTC
+instants. On 23/25-hour days the graph uses elapsed-time coordinates, with its own
+local tick labels, day length and offset-change label. Repeated hours have distinct
+positions; short sleep spanning the clock change never draws backwards. Daily
+progress bars use the day's actual length, while rolling 24-hour statistics still
+mean 24 elapsed hours. Ambiguous clock labels include UTC offsets, and the sleep
+editor preserves the chosen repeated-hour occurrence and allows selecting either
+offset. Reminder schedules retain their existing local-clock behavior and are
+rescheduled by the timezone/time-change receiver.
 
 ## Compatibility and rollout
 

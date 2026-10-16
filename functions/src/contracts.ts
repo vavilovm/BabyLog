@@ -89,6 +89,14 @@ export function validatePayload(
         (payload.dueDate != null && (!validDate(payload.dueDate) || String(payload.dueDate) < String(payload.birthday)))) {
       throw new HttpsError("invalid-argument", "Invalid birthday or due date");
     }
+    if (payload.rhythmZoneId != null) {
+      try {
+        if (typeof payload.rhythmZoneId !== "string") throw new Error("Invalid timezone");
+        new Intl.DateTimeFormat("en", {timeZone: payload.rhythmZoneId});
+      } catch {
+        throw new HttpsError("invalid-argument", "Invalid rhythm timezone");
+      }
+    }
     requiredNumber(payload.updatedAt, "Updated at");
     return;
   }

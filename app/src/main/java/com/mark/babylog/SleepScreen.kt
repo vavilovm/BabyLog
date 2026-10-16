@@ -31,7 +31,16 @@ import kotlinx.coroutines.delay
 private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
 private val dateFormat = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
-private fun clock(t: Long, zone: ZoneId) = Instant.ofEpochMilli(t).atZone(zone).format(clockFormat)
+private fun clock(t: Long, zone: ZoneId): String {
+    val local = Instant.ofEpochMilli(t).atZone(zone)
+    val repeated = zone.rules.getValidOffsets(local.toLocalDateTime()).size > 1
+    return local.format(clockFormat) + if (repeated) " UTC${local.offset}" else ""
+}
+
+private fun graphClock(time: Long, zone: ZoneId, showOffset: Boolean): String =
+    Instant.ofEpochMilli(time).atZone(zone).let { local ->
+        if (showOffset) local.format(clockFormat) + " UTC${local.offset}" else clock(time, zone)
+    }
 
 private fun wakeClock(time: Long, now: Long, zone: ZoneId): String {
     val date = Instant.ofEpochMilli(time).atZone(zone).toLocalDate()
@@ -141,6 +150,16 @@ fun SleepScreen(
                 item { Text("Проверьте время в истории", color = MaterialTheme.colorScheme.error) }
             item {
                 Text("Ритм сна", style = MaterialTheme.typography.titleLarge)
+                Text("Местное время · ${zone.id}", style = MaterialTheme.typography.labelSmall)
+                profile
+                    ?.rhythmZoneId
+                    ?.takeIf { it != zone.id }
+                    ?.let {
+                        Text(
+                            "Ритм по домашнему поясу · $it",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(7, 14, 30).forEach { count ->
                         FilterChip(
@@ -215,8 +234,8 @@ fun SleepScreen(
         ProfileDialog(
             profile,
             onDismiss = { settings = false },
-            onSave = { birth, due ->
-                vm.saveProfile(birth, due)
+            onSave = { birth, due, rhythmZone ->
+                vm.saveProfile(birth, due, rhythmZone)
                 settings = false
             },
         )
@@ -271,11 +290,14 @@ fun SleepScreen(
 internal fun ProfileDialog(
     profile: BabyProfile?,
     onDismiss: () -> Unit,
-    onSave: (String, String?) -> Unit,
+    onSave: (String, String?, String) -> Unit,
 ) {
     val context = LocalContext.current
     var birthday by remember(profile) { mutableStateOf(profile?.birthday?.let(LocalDate::parse)) }
     var due by remember(profile) { mutableStateOf(profile?.dueDate?.let(LocalDate::parse)) }
+    var rhythmZone by
+        remember(profile) { mutableStateOf(profile?.rhythmZoneId ?: ZoneId.systemDefault().id) }
+    val validZone = remember(rhythmZone) { runCatching { ZoneId.of(rhythmZone) }.isSuccess }
     fun pick(value: LocalDate?, maximum: LocalDate?, set: (LocalDate) -> Unit) {
         val initial = value ?: LocalDate.now()
         DatePickerDialog(
@@ -311,6 +333,18 @@ internal fun ProfileDialog(
                 OutlinedButton(onClick = { pick(due, null) { due = it } }) {
                     Text(due?.format(dateFormat) ?: "Предполагаемая дата родов (необязательно)")
                 }
+                OutlinedTextField(
+                    value = rhythmZone,
+                    onValueChange = { rhythmZone = it.trim() },
+                    label = { Text("Домашний часовой пояс") },
+                    placeholder = { Text("Europe/Amsterdam") },
+                    isError = !validZone,
+                    singleLine = true,
+                )
+                Text(
+                    "В поездке оставьте домашний пояс: ритм сна меняется постепенно. Время на графике — местное.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 if (due != null) TextButton(onClick = { due = null }) { Text("Убрать дату родов") }
                 if (birthday != null && due != null && due!! < birthday!!)
                     Text(
@@ -321,8 +355,8 @@ internal fun ProfileDialog(
         },
         confirmButton = {
             Button(
-                enabled = birthday != null && (due == null || due!! >= birthday!!),
-                onClick = { onSave(birthday.toString(), due?.toString()) },
+                enabled = birthday != null && (due == null || due!! >= birthday!!) && validZone,
+                onClick = { onSave(birthday.toString(), due?.toString(), rhythmZone) },
             ) {
                 Text("Сохранить")
             }
@@ -393,7 +427,9 @@ internal fun sleepChartDays(
     val history = (days - 1 downTo 0).map { today.minusDays(it.toLong()) }
     return if (
         (forecast +
-                listOfNotNull(current?.let { ForecastSleep(it.earliestWake, it.latestWake, 0) }))
+                listOfNotNull(
+                    current?.let { ForecastSleep(it.expectedWake, it.expectedWake + 1, 0) }
+                ))
             .any {
                 it.start < tomorrow.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() &&
                     it.end > tomorrowStart
@@ -425,14 +461,28 @@ internal fun SleepChart(
             }
         }
         sleepChartDays(forecast, now, zone, days, current).forEach { day ->
-            val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
-            val end = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            // Wall-clock coordinates align the same hour across days, even on DST transitions.
-            fun fraction(t: Long): Float {
-                if (t <= start) return 0f
-                if (t >= end) return 1f
-                val local = Instant.ofEpochMilli(t).atZone(zone).toLocalTime()
-                return local.toSecondOfDay() / 86400f
+            val axis = SleepDayAxis(day, zone)
+            val start = axis.start
+            val end = axis.end
+            fun fraction(t: Long): Float = axis.fraction(t)
+            if (axis.changesOffset) {
+                val from = Instant.ofEpochMilli(start).atZone(zone).offset
+                val to = Instant.ofEpochMilli(end - 1).atZone(zone).offset
+                Text(
+                    "${day.format(DateTimeFormatter.ofPattern("dd.MM"))} · ${duration(axis.duration)} · UTC$from → UTC$to",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 54.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    listOf(0f, 0.25f, 0.5f, 0.75f, 1f).forEach { tick ->
+                        Text(
+                            if (tick == 1f) "24:00" else clock(axis.timeAt(tick), zone),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -455,21 +505,6 @@ internal fun SleepChart(
                                 .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                         )
                     }
-                    current
-                        ?.takeIf { it.earliestWake < end && it.latestWake > start }
-                        ?.let { range ->
-                            Box(
-                                Modifier.offset(x = width * fraction(range.earliestWake))
-                                    .width(
-                                        width *
-                                            (fraction(range.latestWake) -
-                                                    fraction(range.earliestWake))
-                                                .coerceAtLeast(0.005f)
-                                    )
-                                    .fillMaxHeight()
-                                    .background(colour.copy(alpha = 0.12f))
-                            )
-                        }
                     events
                         .filter {
                             it.sleepRecordVersion == 1 &&
@@ -479,9 +514,6 @@ internal fun SleepChart(
                         .forEach { e ->
                             val left = fraction(e.startedAt)
                             val right = fraction(e.endedAt ?: now)
-                            // A repeated DST hour can map backwards; retain a visible
-                            // inspectable
-                            // block.
                             Box(
                                 Modifier.offset(x = width * left)
                                     .width(
@@ -498,7 +530,7 @@ internal fun SleepChart(
                                     )
                                     .semantics {
                                         contentDescription =
-                                            "${day.format(dateFormat)}: сон ${clock(e.startedAt, zone)} — ${e.endedAt?.let { clock(it, zone) } ?: "сейчас"}"
+                                            "${day.format(dateFormat)}: сон ${graphClock(e.startedAt, zone, axis.changesOffset)} — ${e.endedAt?.let { graphClock(it, zone, axis.changesOffset) } ?: "сейчас"}"
                                     }
                                     .clickable { onSelect(e) }
                             )
@@ -516,30 +548,24 @@ internal fun SleepChart(
                                     .background(colour.copy(alpha = 0.25f))
                                     .semantics {
                                         contentDescription =
-                                            "Прогноз сна ${clock(f.start, zone)} — ${clock(f.end, zone)}"
+                                            "Прогноз сна ${graphClock(f.start, zone, axis.changesOffset)} — ${graphClock(f.end, zone, axis.changesOffset)}"
                                     }
                             )
                         }
-                    current?.let { range ->
-                        listOf(range.earliestWake, range.expectedWake, range.latestWake)
-                            .filter { it >= start && it < end }
-                            .forEach { time ->
-                                val expected = time == range.expectedWake
-                                Box(
-                                    Modifier.offset(x = (width - 3.dp) * fraction(time))
-                                        .width(if (expected) 3.dp else 1.dp)
-                                        .fillMaxHeight()
-                                        .background(
-                                            if (expected) colour
-                                            else MaterialTheme.colorScheme.secondary
-                                        )
-                                        .semantics {
-                                            contentDescription =
-                                                "${if (expected) "Пробуждение" else "Граница прогноза"} ${clock(time, zone)}"
-                                        }
-                                )
-                            }
-                    }
+                    current
+                        ?.expectedWake
+                        ?.takeIf { it >= start && it < end }
+                        ?.let { time ->
+                            Box(
+                                Modifier.offset(x = (width - 3.dp) * fraction(time))
+                                    .width(3.dp)
+                                    .fillMaxHeight()
+                                    .background(colour)
+                                    .semantics {
+                                        contentDescription = "Пробуждение ${clock(time, zone)}"
+                                    }
+                            )
+                        }
                     if (day == today)
                         Box(
                             Modifier.offset(x = width * fraction(now))
@@ -549,32 +575,19 @@ internal fun SleepChart(
                         )
                 }
             }
-            current?.let { range ->
-                val markers =
-                    listOf(
-                            "От" to range.earliestWake,
-                            "●" to range.expectedWake,
-                            "До" to range.latestWake,
-                        )
-                        .filter { it.second >= start && it.second < end }
-                if (markers.isNotEmpty())
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 54.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        markers.forEach { (label, time) ->
-                            Text(
-                                "$label ${clock(if (label == "●") time / 300_000 * 300_000 else time, zone)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight =
-                                    if (label == "●") FontWeight.Bold else FontWeight.Normal,
-                                color =
-                                    if (label == "●") colour
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-            }
+            current
+                ?.expectedWake
+                ?.takeIf { it >= start && it < end }
+                ?.let { time ->
+                    Text(
+                        "● ${clock(time / 300_000 * 300_000, zone)}",
+                        modifier = Modifier.fillMaxWidth().padding(start = 54.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = colour,
+                    )
+                }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             listOf("Сон" to 1f, "Прогноз" to 0.25f).forEach { (label, alpha) ->
@@ -643,7 +656,9 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                         style = MaterialTheme.typography.labelSmall,
                     )
                     LinearProgressIndicator(
-                        progress = { (ms.toFloat() / 86_400_000).coerceIn(0f, 1f) },
+                        progress = {
+                            (ms.toFloat() / SleepDayAxis(day, zone).duration).coerceIn(0f, 1f)
+                        },
                         modifier = Modifier.weight(1f),
                     )
                     Text(duration(ms), style = MaterialTheme.typography.labelSmall)
@@ -813,12 +828,11 @@ private fun SleepEntryTimeField(label: String, time: Long, zone: ZoneId, onChang
                             context,
                             { _, hour, minute ->
                                 onChange(
-                                    selected
-                                        .toLocalDate()
-                                        .atTime(hour, minute)
-                                        .atZone(zone)
-                                        .toInstant()
-                                        .toEpochMilli()
+                                    resolveSleepLocalTime(
+                                        selected.toLocalDate().atTime(hour, minute),
+                                        zone,
+                                        selected.offset,
+                                    )
                                 )
                             },
                             selected.hour,
@@ -837,11 +851,12 @@ private fun SleepEntryTimeField(label: String, time: Long, zone: ZoneId, onChang
                             context,
                             { _, year, month, day ->
                                 onChange(
-                                    LocalDate.of(year, month + 1, day)
-                                        .atTime(selected.toLocalTime())
-                                        .atZone(zone)
-                                        .toInstant()
-                                        .toEpochMilli()
+                                    resolveSleepLocalTime(
+                                        LocalDate.of(year, month + 1, day)
+                                            .atTime(selected.toLocalTime()),
+                                        zone,
+                                        selected.offset,
+                                    )
                                 )
                             },
                             selected.year,
@@ -853,6 +868,22 @@ private fun SleepEntryTimeField(label: String, time: Long, zone: ZoneId, onChang
                 }
             ) {
                 Text(selected.format(dateFormat))
+            }
+        }
+        val offsets = zone.rules.getValidOffsets(selected.toLocalDateTime())
+        if (offsets.size > 1) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                offsets.forEach { offset ->
+                    FilterChip(
+                        selected = offset == selected.offset,
+                        onClick = {
+                            onChange(
+                                resolveSleepLocalTime(selected.toLocalDateTime(), zone, offset)
+                            )
+                        },
+                        label = { Text("UTC$offset") },
+                    )
+                }
             }
         }
         MinuteShortcuts { onChange(moveMinutes(time, it).coerceAtLeast(0)) }

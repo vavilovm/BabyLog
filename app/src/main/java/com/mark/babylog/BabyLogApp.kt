@@ -26,6 +26,7 @@ class BabyLogApp : Application() {
                 MIGRATION_3_4,
                 MIGRATION_4_5,
                 MIGRATION_5_6,
+                MIGRATION_6_7,
             )
             .build()
     }
@@ -48,6 +49,17 @@ class BabyLogApp : Application() {
     }
 
     companion object {
+        val MIGRATION_6_7 =
+            object : Migration(6, 7) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE baby_profile ADD COLUMN rhythmZoneId TEXT")
+                    db.execSQL(
+                        "UPDATE baby_profile SET rhythmZoneId = ?",
+                        arrayOf(java.time.ZoneId.systemDefault().id),
+                    )
+                }
+            }
+
         val MIGRATION_5_6 =
             object : Migration(5, 6) {
                 override fun migrate(db: SupportSQLiteDatabase) {

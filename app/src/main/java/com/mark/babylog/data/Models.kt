@@ -157,6 +157,7 @@ data class BabyProfile(
     @PrimaryKey val id: Int = 1,
     val birthday: String,
     val dueDate: String? = null,
+    val rhythmZoneId: String? = null,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
@@ -444,7 +445,7 @@ class Converters {
             BabyReminder::class,
             ReminderCompletion::class,
         ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

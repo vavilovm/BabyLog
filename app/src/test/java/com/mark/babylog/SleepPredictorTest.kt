@@ -28,6 +28,14 @@ class SleepPredictorTest {
             }
         }
 
+    private fun fullRhythm(days: Int): List<BabyEvent> =
+        (0 until days).flatMap { day ->
+            val morning = base + day * 86_400_000L
+            listOf(120 to 60, 300 to 60, 480 to 60, 660 to 30, 840 to 600).map { (offset, length) ->
+                session(morning + offset * minute, length)
+            }
+        }
+
     @Test
     fun noHistoryAndLegacyMarksDoNotInventPredictions() {
         assertNull(SleepPredictor.calculate(emptyList(), base, zone).next)
@@ -300,7 +308,7 @@ class SleepPredictorTest {
     }
 
     @Test
-    fun overnightWakeKeepsLocalMorningTimeAcrossDst() {
+    fun overnightWakeKeepsRealRhythmAcrossDst() {
         val historicalStart =
             ZonedDateTime.of(2026, 10, 25, 1, 30, 0, 0, zone).toInstant().toEpochMilli()
         val historicalEnd =
@@ -315,6 +323,118 @@ class SleepPredictorTest {
                 )
                 .current!!
         assertEquals(start + 120 * minute, result.expectedWake)
+    }
+
+    @Test
+    fun activeSleepKeepsLaterProjectionsThroughTomorrowWithoutMovingWakeEstimate() {
+        val events = fullRhythm(10)
+        val start = base + 10 * 86_400_000L + 120 * minute
+        val active = session(start).copy(endedAt = null)
+        val now = start + 10 * minute
+        val result = SleepPredictor.calculate(events + active, now, zone)
+        val current = result.current!!
+        assertNull(result.next)
+        assertEquals(start + 60 * minute, current.expectedWake)
+        assertEquals(now, result.forecast.first().start)
+        assertEquals(current.expectedWake, result.forecast.first().end)
+        assertTrue(result.forecast.size > 1)
+        val tomorrow = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().plusDays(1)
+        assertTrue(
+            result.forecast.any {
+                Instant.ofEpochMilli(it.start).atZone(zone).toLocalDate() == tomorrow
+            }
+        )
+        result.forecast.zipWithNext().forEach { (a, b) ->
+            assertTrue(b.start > a.end)
+            assertTrue(b.uncertaintyMinutes >= a.uncertaintyMinutes)
+        }
+        assertEquals(current, SleepPredictor.calculate(events + active, now + minute, zone).current)
+        val overdue = SleepPredictor.calculate(events + active, start + 120 * minute, zone)
+        assertEquals(current, overdue.current)
+        assertTrue(overdue.forecast.isEmpty())
+    }
+
+    @Test
+    fun awakeForecastIncludesTomorrowAndRetainsCalibratedNextEstimate() {
+        val events = history(18)
+        val wake = events.last().endedAt!!
+        val result = SleepPredictor.calculate(events, wake, zone)
+        assertEquals(wake + 90 * minute, result.next!!.expected)
+        assertEquals(0.0, result.next!!.medianErrorMinutes!!, 0.01)
+        assertFalse(result.next!!.preliminary)
+        val tomorrow = Instant.ofEpochMilli(wake).atZone(zone).toLocalDate().plusDays(1)
+        val completeHistory = fullRhythm(18)
+        val fullWake = completeHistory.last().endedAt!!
+        val fullResult = SleepPredictor.calculate(completeHistory, fullWake, zone)
+        val fullTomorrow = Instant.ofEpochMilli(fullWake).atZone(zone).toLocalDate().plusDays(1)
+        assertTrue(
+            fullResult.forecast.any {
+                Instant.ofEpochMilli(it.start).atZone(zone).toLocalDate() == fullTomorrow
+            }
+        )
+    }
+
+    @Test
+    fun ongoingOvernightDoesNotJumpAtEitherSeasonalClockChange() {
+        for (date in listOf(LocalDate.of(2026, 3, 29), LocalDate.of(2026, 10, 25))) {
+            val bedtime = date.minusDays(1).atTime(21, 0).atZone(zone).toInstant().toEpochMilli()
+            val nights = (1..7).map { session(bedtime - it * 86_400_000L, 660) }
+            val active = session(bedtime).copy(endedAt = null)
+            val before = SleepPredictor.calculate(nights + active, bedtime, zone).current!!
+            val after =
+                SleepPredictor.calculate(nights + active, bedtime + 8 * 60 * minute, zone).current!!
+            assertEquals(bedtime + 660 * minute, before.expectedWake)
+            assertEquals(before, after)
+            val expectedCivilHour = if (date.monthValue == 3) 9 else 7
+            assertEquals(
+                expectedCivilHour,
+                Instant.ofEpochMilli(after.expectedWake).atZone(zone).hour,
+            )
+            // A fixed pre-transition clock must give identical results on the same observations.
+            val oldClock = zone.rules.getOffset(Instant.ofEpochMilli(bedtime))
+            assertEquals(
+                after,
+                SleepPredictor.calculate(nights + active, bedtime + 8 * 60 * minute, oldClock)
+                    .current,
+            )
+        }
+    }
+
+    @Test
+    fun nextSleepModelMatchesOldClockAcrossSeasonalChanges() {
+        for (date in listOf(LocalDate.of(2026, 3, 29), LocalDate.of(2026, 10, 25))) {
+            val oldClock = zone.rules.getOffset(date.minusDays(1).atStartOfDay(zone).toInstant())
+            val first = date.minusDays(18).atTime(7, 0).atZone(oldClock).toInstant().toEpochMilli()
+            val events =
+                (0..18).flatMap { day ->
+                    (0..3).map { nap -> session(first + day * 86_400_000L + nap * 150 * minute) }
+                }
+            val now = events.last().endedAt!!
+            assertEquals(
+                SleepPredictor.calculate(events, now, oldClock).next,
+                SleepPredictor.calculate(events, now, zone).next,
+            )
+        }
+    }
+
+    @Test
+    fun travelChangesCivilLabelsWithoutChangingCurrentOrNextPredictions() {
+        val home = BabyProfile(birthday = "2026-07-01", rhythmZoneId = zone.id)
+        val events = history(18)
+        val wake = events.last().endedAt!!
+        val expected = SleepPredictor.calculate(events, wake, zone, home).next!!
+        val start = base + 18 * 86_400_000L
+        val active = session(start).copy(endedAt = null)
+        val before = SleepPredictor.calculate(events + active, start + minute, zone, home).current!!
+        for (destination in
+            listOf("America/New_York", "Asia/Tokyo", "Pacific/Honolulu", "Pacific/Kiritimati")) {
+            val local = ZoneId.of(destination)
+            assertEquals(expected, SleepPredictor.calculate(events, wake, local, home).next)
+            val after = SleepPredictor.calculate(events + active, start + minute, local, home)
+            assertEquals(before, after.current)
+            assertTrue(after.forecast.size > 1)
+            assertEquals(before.expectedWake, after.forecast.first().end)
+        }
     }
 
     @Test

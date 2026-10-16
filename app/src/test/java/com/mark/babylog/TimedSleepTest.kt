@@ -60,7 +60,18 @@ class TimedSleepTest {
                     )
                 )
             repo.saveProfile(
-                BabyProfile(birthday = "2026-07-01", dueDate = "2026-07-15", updatedAt = 10)
+                BabyProfile(
+                    birthday = "2026-07-01",
+                    dueDate = "2026-07-15",
+                    rhythmZoneId = "Europe/Amsterdam",
+                    updatedAt = 10,
+                )
+            )
+            assertEquals(
+                "Europe/Amsterdam",
+                org.json
+                    .JSONObject(db.events().pending().single().payload)
+                    .getString("rhythmZoneId"),
             )
             repo.beginSleep(2000)
             assertEquals(
@@ -86,6 +97,25 @@ class TimedSleepTest {
             assertEquals("2026-07-01", db.events().profile()!!.birthday)
             repo.applyProfile(mapOf("birthday" to "2026-06-30", "updatedAt" to 20L))
             assertEquals("2026-06-30", db.events().profile()!!.birthday)
+            assertEquals("Europe/Amsterdam", db.events().profile()!!.rhythmZoneId)
+            repo.applyProfile(
+                mapOf(
+                    "birthday" to "2026-06-30",
+                    "updatedAt" to 30L,
+                    "rhythmZoneId" to "Asia/Tokyo",
+                )
+            )
+            assertEquals("Asia/Tokyo", db.events().profile()!!.rhythmZoneId)
+            repo.applyProfile(
+                mapOf(
+                    "birthday" to "2026-06-30",
+                    "updatedAt" to 40L,
+                    "rhythmZoneId" to "Invalid/Zone",
+                )
+            )
+            assertEquals("Asia/Tokyo", db.events().profile()!!.rhythmZoneId)
+            repo.saveProfile(BabyProfile(birthday = "2026-07-01", updatedAt = 50L))
+            assertEquals("Asia/Tokyo", db.events().profile()!!.rhythmZoneId)
         } finally {
             db.close()
         }

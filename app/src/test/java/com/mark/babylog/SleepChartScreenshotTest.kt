@@ -157,6 +157,68 @@ class SleepChartScreenshotTest {
         }
 
     @Test
+    fun ongoingNap_expectedWakeOnly() =
+        paparazzi.snapshot {
+            BabyTheme {
+                val start = now - 10 * 60_000L
+                val active =
+                    BabyEvent(
+                        type = EventType.SLEEP,
+                        detail = "BACK",
+                        startedAt = start,
+                        sleepRecordVersion = 1,
+                    )
+                val current =
+                    CurrentSleepEstimate(
+                        start,
+                        now + 60_000L,
+                        now + 29 * 60_000L,
+                        now + 42 * 60_000L,
+                        5,
+                        false,
+                    )
+                Surface {
+                    Column(Modifier.padding(16.dp)) {
+                        SleepChart(
+                            events.filter { it.endedAt!! <= start } + active,
+                            listOf(ForecastSleep(now, current.expectedWake, 20)),
+                            now,
+                            zone,
+                            7,
+                            {},
+                            current,
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun repeatedHour_usesElapsedTimeline() =
+        paparazzi.snapshot {
+            BabyTheme {
+                val day = LocalDate.of(2026, 10, 25)
+                val local = day.atTime(2, 30)
+                val start =
+                    local.atZone(zone).withEarlierOffsetAtOverlap().toInstant().toEpochMilli()
+                val end = local.atZone(zone).withLaterOffsetAtOverlap().toInstant().toEpochMilli()
+                val event =
+                    BabyEvent(
+                        type = EventType.SLEEP,
+                        detail = "BACK",
+                        startedAt = start,
+                        endedAt = end,
+                        sleepRecordVersion = 1,
+                    )
+                Surface {
+                    Column(Modifier.padding(16.dp)) {
+                        SleepChart(listOf(event), emptyList(), end + 60_000, zone, 3, {})
+                    }
+                }
+            }
+        }
+
+    @Test
     fun nightDashboard_broadWindow() =
         paparazzi.snapshot {
             BabyTheme {
@@ -216,5 +278,5 @@ class SleepChartScreenshotTest {
 
     @Test
     fun birthday_requiredOnboarding() =
-        paparazzi.snapshot { BabyTheme { ProfileDialog(null, {}, { _, _ -> }) } }
+        paparazzi.snapshot { BabyTheme { ProfileDialog(null, {}, { _, _, _ -> }) } }
 }

@@ -37,6 +37,19 @@ class SleepPredictorTest {
         }
 
     @Test
+    fun expiredNextEstimateKeepsProjectedRhythmWithoutSlidingItsAnchor() {
+        val events = fullRhythm(10)
+        val wake = events.last().endedAt!!
+        val initial = SleepPredictor.calculate(events, wake, zone)
+        val later = SleepPredictor.calculate(events, wake + 16 * 60 * minute, zone)
+        assertNotNull(initial.next)
+        assertNotNull(later.next)
+        assertEquals(initial.next!!.expected, later.next!!.expected)
+        assertTrue(later.next!!.latest < wake + 16 * 60 * minute)
+        assertTrue(later.forecast.any { it.end > wake + 16 * 60 * minute })
+    }
+
+    @Test
     fun noHistoryAndLegacyMarksDoNotInventPredictions() {
         assertNull(SleepPredictor.calculate(emptyList(), base, zone).next)
         assertNull(
@@ -351,7 +364,8 @@ class SleepPredictorTest {
         assertEquals(current, SleepPredictor.calculate(events + active, now + minute, zone).current)
         val overdue = SleepPredictor.calculate(events + active, start + 120 * minute, zone)
         assertEquals(current, overdue.current)
-        assertTrue(overdue.forecast.isEmpty())
+        assertTrue(overdue.forecast.any { it.end > start + 120 * minute })
+        assertEquals(result.forecast.drop(1), overdue.forecast)
     }
 
     @Test

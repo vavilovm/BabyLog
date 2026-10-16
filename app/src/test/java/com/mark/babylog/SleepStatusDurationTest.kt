@@ -8,13 +8,13 @@ import org.junit.Test
 
 class SleepStatusDurationTest {
     @Test
-    fun showsSecondsUntilOneHour() {
-        assertEquals("0 мин 0 с", sleepStatusDuration(-1))
-        assertEquals("0 мин 0 с", sleepStatusDuration(999))
-        assertEquals("0 мин 1 с", sleepStatusDuration(1_000))
-        assertEquals("0 мин 59 с", sleepStatusDuration(59_999))
-        assertEquals("1 мин 0 с", sleepStatusDuration(60_000))
-        assertEquals("59 мин 59 с", sleepStatusDuration(3_599_999))
+    fun showsMinutesWithoutSeconds() {
+        assertEquals("0 мин", sleepStatusDuration(-1))
+        assertEquals("0 мин", sleepStatusDuration(999))
+        assertEquals("0 мин", sleepStatusDuration(1_000))
+        assertEquals("0 мин", sleepStatusDuration(59_999))
+        assertEquals("1 мин", sleepStatusDuration(60_000))
+        assertEquals("59 мин", sleepStatusDuration(3_599_999))
     }
 
     @Test

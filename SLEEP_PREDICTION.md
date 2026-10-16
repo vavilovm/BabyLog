@@ -58,8 +58,13 @@ sleep problems. It does not use an LLM or send sleep records to an AI service.
   sleeps. These are tentative projections rather than separately calibrated
   whole-day prediction intervals. During an active sleep, continue from its expected
   wake, without using synthetic sleeps as training samples or changing the current
-  sleep estimate. Stop if matching history is missing or the current estimate has
-  already passed. Projected sleeps never contribute to recorded totals.
+  sleep estimate. Keep later projections when the first estimate has passed;
+  the card explicitly reports an expired window instead of moving its anchor.
+  For projections only, sparse time-of-day contexts borrow available recorded
+  durations and awake intervals. Stop when no usable history exists, at the end
+  of tomorrow, or after 32 projected sleeps. Projected sleeps never contribute
+  to recorded totals. The graph draws estimated sleep blocks without confidence bands;
+  uncertainty metadata remains internal to the model.
 
 ## Ongoing sleep duration
 
@@ -174,3 +179,22 @@ Each sleep-record emission captures a fresh observation clock before validation.
 This avoids treating a just-started or just-finished sleep as future-dated between
 the one-second UI ticks and caching a false conflict for the 15-second prediction
 refresh period. Real overlaps and sync conflicts still appear in history.
+
+## Dashboard refresh and presentation
+
+The elapsed-duration leaf owns its one-second clock and exposes hours/minutes via
+`derivedStateOf`. It does not invalidate the whole screen each second. Prediction
+refresh stays at 15 seconds; the chart and totals receive minute time inputs.
+Historical session validation is remembered until events or start/end validity
+boundaries change. Timezone broadcasts invalidate zone-dependent calculations;
+aligned clock ticks retain midnight rollover. The chart uses one shared tick list
+for its labels and grid at every zoom, including 23/25-hour days.
+
+The app bar keeps its existing height and adds a 48 dp sync action. Its details
+separate local saving, pending operations, active exchange, last successful family
+sync, and failure. Pending state takes precedence over a historical success;
+an unobserved outbox does not imply that it is empty. Last successful sync survives
+process recreation. Cancellation propagates through sync, batch/legacy requests,
+realtime handlers, and family action results; it does not become a retry/failure.
+
+Review actual before/after renders in [the preview gallery](art/dashboard-review/README.md).

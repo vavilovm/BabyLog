@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mark.babylog.data.*
 import com.mark.babylog.sync.AppSurfaceSync
+import com.mark.babylog.sync.familyResult
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.Duration
@@ -127,7 +128,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val membership =
         repository.membership.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val pendingCount =
-        repository.pendingCount.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+        repository.pendingCount.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
     val syncStatus = babyApp.familySync.status.asStateFlow()
     val familyMembers = babyApp.familySync.members.asStateFlow()
 
@@ -194,13 +195,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     fun createFamily(name: String, onDone: (Result<String>) -> Unit) =
-        viewModelScope.launch { onDone(runCatching { babyApp.familySync.createFamily(name) }) }
+        viewModelScope.launch { onDone(familyResult { babyApp.familySync.createFamily(name) }) }
 
     fun joinFamily(code: String, name: String, onDone: (Result<Unit>) -> Unit) =
-        viewModelScope.launch { onDone(runCatching { babyApp.familySync.joinFamily(code, name) }) }
+        viewModelScope.launch { onDone(familyResult { babyApp.familySync.joinFamily(code, name) }) }
 
     fun createInvite(onDone: (Result<String>) -> Unit) =
-        viewModelScope.launch { onDone(runCatching { babyApp.familySync.createInvite() }) }
+        viewModelScope.launch { onDone(familyResult { babyApp.familySync.createInvite() }) }
 
     fun retrySync() = launchAction {
         if (!babyApp.familySync.sync()) error("Синхронизация не удалась")
@@ -208,7 +209,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun launchAction(block: suspend () -> Unit) =
         viewModelScope.launch {
-            runCatching { block() }
+            familyResult { block() }
                 .onFailure { error ->
                     _errors.emit(error.message ?: "Не удалось выполнить действие")
                 }

@@ -65,6 +65,26 @@ class SleepChartScreenshotTest {
     }
 
     @Test
+    fun zoomedChart_labelsFollowGrid() =
+        paparazzi.snapshot {
+            BabyTheme {
+                Surface {
+                    Column(Modifier.padding(16.dp)) {
+                        SleepChart(
+                            events,
+                            listOf(ForecastSleep(now + 3_600_000, now + 6_300_000, 30)),
+                            now,
+                            zone,
+                            3,
+                            {},
+                            initialViewport = SleepChartViewport(3f, 0.4f),
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test
     fun sleepDashboard_nextNap() =
         paparazzi.snapshot {
             BabyTheme {

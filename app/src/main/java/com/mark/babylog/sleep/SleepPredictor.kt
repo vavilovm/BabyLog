@@ -341,14 +341,17 @@ object SleepPredictor {
         if (active != null) {
             val current = currentSleep(active, completed, rhythmZone, now)
             val forecast = mutableListOf<ForecastSleep>()
-            if (current != null && current.expectedWake > now) {
+            if (current != null) {
                 val radius = (current.latestWake - current.earliestWake).toDouble() / (2 * MINUTE)
-                forecast += ForecastSleep(now, current.expectedWake, radius.toInt())
+                if (current.expectedWake > now)
+                    forecast += ForecastSleep(now, current.expectedWake, radius.toInt())
                 val synthetic = active.copy(endedAt = current.expectedWake)
                 val history = completed + synthetic
                 val candidates =
-                    samples.filter { it.phase == phase(current.expectedWake, rhythmZone) }
-                if (completed.size >= 4 && candidates.isNotEmpty()) {
+                    samples
+                        .filter { it.phase == phase(current.expectedWake, rhythmZone) }
+                        .ifEmpty { samples }
+                if (candidates.isNotEmpty()) {
                     val start =
                         current.expectedWake +
                             (predict(
@@ -376,7 +379,6 @@ object SleepPredictor {
         }
         val latest = completed.lastOrNull() ?: return SleepPrediction(null, emptyList(), conflicts)
         val wake = latest.endedAt!!
-        if (now - wake > 12 * 60 * MINUTE) return SleepPrediction(null, emptyList(), conflicts)
         val matched = samples.filter { it.phase == phase(wake, rhythmZone) }
         val pool =
             if (matched.size >= 3) matched
@@ -433,9 +435,10 @@ object SleepPredictor {
                 coverageResults.takeIf { it.isNotEmpty() }?.average(),
                 !calibrated,
             )
-        // A passed estimate stays anchored to the real wake; never slide it forward.
+        // Keep the scenario anchored to the real wake, even after its first estimate passes.
+        // Later projected sleeps remain useful on the graph; the card reports an expired window.
         val forecast =
-            if (expected >= now && completed.size >= 4)
+            if (completed.isNotEmpty())
                 projectSleeps(
                     expected,
                     horizon,
@@ -470,6 +473,7 @@ object SleepPredictor {
             val durations =
                 completed
                     .filter { isNight(it.startedAt, zone) == isNight(start, zone) }
+                    .ifEmpty { completed }
                     .map {
                         (it.endedAt!! - it.startedAt).toDouble() / MINUTE to
                             exp(-ln(2.0) * (now - it.startedAt).toDouble() / (7 * DAY))
@@ -504,7 +508,7 @@ object SleepPredictor {
                     sleepRecordVersion = 1,
                 )
             history += synthetic
-            val candidates = samples.filter { it.phase == phase(end, zone) }
+            val candidates = samples.filter { it.phase == phase(end, zone) }.ifEmpty { samples }
             if (candidates.isEmpty()) return forecast
             start =
                 end +

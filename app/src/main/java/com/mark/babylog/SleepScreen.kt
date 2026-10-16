@@ -2,7 +2,12 @@ package com.mark.babylog
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.horizontalScroll
@@ -20,12 +25,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mark.babylog.data.*
 import com.mark.babylog.sleep.*
@@ -77,25 +85,22 @@ fun SleepScreen(
     val membership by vm.membership.collectAsStateWithLifecycle()
     val reminders by vm.reminderState.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
-    var clockTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
+    val clockTick by rememberSleepClock()
     // A Room emission can arrive between ticks. Evaluate it with a fresh clock,
     // otherwise a just-started session looks future-dated until the next prediction refresh.
-    val observedAt = remember(events) { System.currentTimeMillis() }
-    val now = maxOf(clockTick, observedAt)
-    LaunchedEffect(Unit) {
-        while (true) {
-            clockTick = System.currentTimeMillis()
-            delay(1_000)
-        }
-    }
-    val zone = ZoneId.systemDefault()
+    val now = remember(events, clockTick) { System.currentTimeMillis() }
+    val zone = rememberSleepZone()
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val predictionTime = now / 15_000 * 15_000
     val prediction =
         remember(events, predictionTime, zone, profile) {
             SleepPredictor.calculate(events, now, zone, profile)
         }
-    val sessions = remember(events, now) { SleepPredictor.validSessions(events, now) }
+    // Validity only changes at event boundaries, not on each clock tick.
+    val validity = sessionValidityKey(events, now)
+    val sessions = remember(events, validity) { SleepPredictor.validSessions(events, now) }
+    val displayNow = now / 60_000 * 60_000
     val active = sessions.firstOrNull { it.endedAt == null }
     val lastWake = sessions.lastOrNull { it.endedAt != null }?.endedAt
     var days by remember { mutableIntStateOf(7) }
@@ -121,21 +126,17 @@ fun SleepScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Сон малыша", fontWeight = FontWeight.Bold)
-                        profile?.let { p ->
-                            val age = SleepPredictor.correctedAgeDays(p, today)
-                            Text(
-                                "${age / 7} нед. ${age % 7} дн.${if (p.dueDate != null) " · скорректированный возраст" else ""}",
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                    }
-                },
-                actions = { TextButton(onClick = { settings = true }) { Text("Профиль") } },
-            )
+            SleepAppBar(
+                profile,
+                today,
+                membership != null,
+                pendingCount,
+                syncStatus,
+                zone,
+                vm::retrySync,
+            ) {
+                settings = true
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -153,9 +154,12 @@ fun SleepScreen(
                     vm::beginSleep,
                     vm::finishSleep,
                     { editing = it },
+                    liveDuration = true,
                 )
             }
-            item { NextSleepCard(prediction.next, active != null, now, zone, prediction.current) }
+            item {
+                NextSleepCard(prediction.next, active != null, displayNow, zone, prediction.current)
+            }
 
             if (prediction.conflicts.isNotEmpty())
                 item { Text("Проверьте время в истории", color = MaterialTheme.colorScheme.error) }
@@ -185,7 +189,7 @@ fun SleepScreen(
                 SleepChart(
                     events,
                     prediction.forecast,
-                    now,
+                    displayNow,
                     zone,
                     days,
                     onSelect = { event ->
@@ -202,16 +206,12 @@ fun SleepScreen(
                     current = prediction.current,
                 )
             }
-            item { SleepTotals(sessions, now, zone) }
+            item { SleepTotals(sessions, displayNow, zone) }
             item {
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     TextButton(onClick = { adding = true }) { Text("+ Добавить сон") }
                     TextButton(onClick = { family = true }) { Text("Семья") }
                     TextButton(onClick = { reminderSettings = true }) { Text("Напоминания") }
-                }
-                syncStatus.error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = vm::retrySync) { Text("Повторить синхронизацию") }
                 }
                 ReminderPanel(
                     reminders,
@@ -223,7 +223,9 @@ fun SleepScreen(
             item { Text("История сна", style = MaterialTheme.typography.titleLarge) }
             items(history, key = { it.remoteId }) { e ->
                 OutlinedCard(
-                    Modifier.fillMaxWidth().clickable { editing = e },
+                    Modifier.fillMaxWidth()
+                        .semantics { selected = selectedSleep == e.remoteId }
+                        .clickable { editing = e },
                     colors =
                         CardDefaults.outlinedCardColors(
                             containerColor =
@@ -469,6 +471,47 @@ internal fun sleepChartDays(
     else history
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SleepAppBar(
+    profile: BabyProfile?,
+    today: LocalDate,
+    family: Boolean,
+    pendingCount: Int,
+    syncStatus: com.mark.babylog.sync.FamilySyncStatus,
+    zone: ZoneId,
+    onRetry: () -> Unit,
+    onProfile: () -> Unit,
+) {
+    TopAppBar(
+        title = {
+            Column {
+                Text(
+                    "Сон малыша",
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                profile?.let { p ->
+                    val age = SleepPredictor.correctedAgeDays(p, today)
+                    Text(
+                        "${age / 7} нед. ${age % 7} дн.${if (p.dueDate != null) " · скорректированный возраст" else ""}",
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
+        actions = {
+            SyncStatusAction(family, pendingCount, syncStatus, zone, onRetry)
+            TextButton(onClick = onProfile, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("Профиль")
+            }
+        },
+    )
+}
+
 @Composable
 internal fun SleepChart(
     events: List<BabyEvent>,
@@ -478,12 +521,14 @@ internal fun SleepChart(
     days: Int,
     onSelect: (BabyEvent) -> Unit,
     current: CurrentSleepEstimate? = null,
+    modifier: Modifier = Modifier,
+    initialViewport: SleepChartViewport = SleepChartViewport(),
 ) {
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val colour = MaterialTheme.colorScheme.primary
-    var viewport by remember { mutableStateOf(SleepChartViewport()) }
+    var viewport by remember(initialViewport) { mutableStateOf(initialViewport) }
     Column(
-        Modifier.testTag("sleep-chart").pointerInput(Unit) {
+        modifier.testTag("sleep-chart").pointerInput(Unit) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                 var transforming = false
@@ -557,41 +602,26 @@ internal fun SleepChart(
                     axis.changesOffset ||
                     SleepDayAxis(chartDays[index - 1], zone).changesOffset
             )
-                Row(
-                    Modifier.fillMaxWidth().padding(start = 54.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    (0..4).forEach { tick ->
-                        val f = viewport.start + (viewport.end - viewport.start) * tick / 4f
-                        Text(
-                            if (f >= 1f) "24:00" else clock(axis.timeAt(f), zone),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                }
+                SleepChartTimeAxis(axis, viewport, zone)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     day.format(DateTimeFormatter.ofPattern("dd.MM")),
                     Modifier.width(54.dp),
+                    fontWeight = if (day == today) FontWeight.Bold else FontWeight.Normal,
                     style = MaterialTheme.typography.labelSmall,
                 )
                 BoxWithConstraints(
                     Modifier.weight(1f)
                         .height(38.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .background(
+                            if (day == today) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f)
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.035f)
+                        )
                 ) {
                     val width = maxWidth
-                    val step =
-                        when {
-                            viewport.scale >= 4f -> 1
-                            viewport.scale >= 2f -> 2
-                            else -> 6
-                        }
-                    (start until end step 3_600_000L)
-                        .filter { Instant.ofEpochMilli(it).atZone(zone).hour % step == 0 }
+                    sleepChartTicks(axis, viewport)
                         .map { axis.fraction(it) }
-                        .filter { it > viewport.start && it < viewport.end }
                         .forEach { time ->
                             val tick = viewport.fraction(time)
                             Box(
@@ -657,7 +687,12 @@ internal fun SleepChart(
                                     .width(width * (right - left).coerceAtLeast(0.005f))
                                     .fillMaxHeight()
                                     .padding(vertical = 10.dp)
-                                    .background(colour.copy(alpha = 0.25f))
+                                    .border(
+                                        1.dp,
+                                        colour.copy(alpha = 0.75f),
+                                        RoundedCornerShape(3.dp),
+                                    )
+                                    .background(colour.copy(alpha = 0.08f))
                                     .semantics {
                                         contentDescription =
                                             "Прогноз сна ${graphClock(f.start, zone, axis.changesOffset)} — ${graphClock(f.end, zone, axis.changesOffset)}"
@@ -674,7 +709,8 @@ internal fun SleepChart(
                                     .fillMaxHeight()
                                     .background(colour)
                                     .semantics {
-                                        contentDescription = "Пробуждение ${clock(time, zone)}"
+                                        contentDescription =
+                                            "Прогноз пробуждения около ${clock(time, zone)}"
                                     }
                             )
                         }
@@ -684,6 +720,7 @@ internal fun SleepChart(
                                 .width(2.dp)
                                 .fillMaxHeight()
                                 .background(MaterialTheme.colorScheme.tertiary)
+                                .semantics { contentDescription = "Сейчас ${clock(now, zone)}" }
                         )
                 }
             }
@@ -692,7 +729,7 @@ internal fun SleepChart(
                 ?.takeIf { it >= start && it < end && visible(it, it + 1) }
                 ?.let { time ->
                     Text(
-                        "● ${clock(time / 300_000 * 300_000, zone)}",
+                        "Около ${clock(time / 300_000 * 300_000, zone)}",
                         modifier = Modifier.fillMaxWidth().padding(start = 54.dp),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         style = MaterialTheme.typography.labelSmall,
@@ -702,7 +739,7 @@ internal fun SleepChart(
                 }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            listOf("Сон" to 1f, "Прогноз" to 0.25f).forEach { (label, alpha) ->
+            listOf("Сон" to 1f, "Прогноз" to 0.08f).forEach { (label, alpha) ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -710,13 +747,51 @@ internal fun SleepChart(
                     Box(
                         Modifier.size(8.dp)
                             .clip(RoundedCornerShape(2.dp))
+                            .border(
+                                if (alpha < 1f) 1.dp else 0.dp,
+                                colour,
+                                RoundedCornerShape(2.dp),
+                            )
                             .background(colour.copy(alpha = alpha))
                     )
                     Text(label, style = MaterialTheme.typography.labelSmall)
                 }
             }
-            if (current != null)
-                Text("● Пробуждение", style = MaterialTheme.typography.labelSmall, color = colour)
+            Text(
+                "│ Сейчас",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.tertiary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SleepChartTimeAxis(axis: SleepDayAxis, viewport: SleepChartViewport, zone: ZoneId) {
+    val ticks = sleepChartTicks(axis, viewport)
+    Layout(
+        modifier = Modifier.fillMaxWidth().padding(start = 54.dp),
+        content = {
+            ticks.forEach { time ->
+                Text(
+                    if (time == axis.end) "24:00" else clock(time, zone),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        },
+    ) { measurables, constraints ->
+        val labels = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        layout(constraints.maxWidth, labels.maxOfOrNull { it.height } ?: 0) {
+            labels.forEachIndexed { index, label ->
+                val center = viewport.fraction(axis.fraction(ticks[index])) * constraints.maxWidth
+                label.placeRelative(
+                    (center.toInt() - label.width / 2).coerceIn(
+                        0,
+                        (constraints.maxWidth - label.width).coerceAtLeast(0),
+                    ),
+                    0,
+                )
+            }
         }
     }
 }
@@ -789,8 +864,17 @@ internal fun SleepStatusCard(
     onStart: () -> Unit,
     onWake: () -> Unit,
     onEdit: (BabyEvent) -> Unit,
+    liveDuration: Boolean = false,
 ) {
-    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(28.dp)) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(24.dp),
+        border =
+            androidx.compose.foundation.BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+            ),
+    ) {
         Column(
             Modifier.fillMaxWidth().padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -799,12 +883,10 @@ internal fun SleepStatusCard(
                 if (active != null) "Сейчас спит" else "Сейчас бодрствует",
                 style = MaterialTheme.typography.titleLarge,
             )
-            Text(
-                if (active != null) sleepStatusDuration(now - active.startedAt)
-                else lastWake?.let { sleepStatusDuration(now - it) } ?: "Начнём наблюдать её ритм",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
+            val since = active?.startedAt ?: lastWake
+            if (liveDuration) SleepElapsedText(since, rememberElapsedClock(now, since))
+            else SleepElapsedText(since, rememberUpdatedState(now))
+
             Button(
                 onClick = { if (active == null) onStart() else onWake() },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
@@ -824,6 +906,30 @@ internal fun SleepStatusCard(
 }
 
 @Composable
+private fun rememberElapsedClock(initial: Long, since: Long?): State<Long> {
+    val clock = remember(since) { mutableLongStateOf(initial) }
+    LaunchedEffect(since) {
+        while (true) {
+            clock.longValue = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    return clock
+}
+
+/** Read the second clock only here; publish a new text value once per elapsed minute. */
+@Composable
+internal fun SleepElapsedText(since: Long?, clock: State<Long>) {
+    val text by
+        remember(since, clock) {
+            derivedStateOf {
+                since?.let { sleepStatusDuration(clock.value - it) } ?: "Начнём наблюдать её ритм"
+            }
+        }
+    Text(text, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+}
+
+@Composable
 internal fun NextSleepCard(
     estimate: SleepEstimate?,
     sleeping: Boolean,
@@ -832,7 +938,7 @@ internal fun NextSleepCard(
     current: CurrentSleepEstimate? = null,
 ) {
     OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 if (sleeping) "Пробуждение" else "Следующий сон",
                 style = MaterialTheme.typography.titleMedium,
@@ -841,28 +947,55 @@ internal fun NextSleepCard(
             val earliest = if (sleeping) current?.earliestWake else estimate?.earliest
             val latest = if (sleeping) current?.latestWake else estimate?.latest
             if (expected == null || earliest == null || latest == null) {
-                Text("— : —", style = MaterialTheme.typography.displaySmall)
-                Text("Мало записей", style = MaterialTheme.typography.labelMedium)
+                Text("Пока мало данных", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Добавляйте начало и конец сна — прогноз появится по истории записей.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (now > latest) {
+                Text("Окно прогноза прошло", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    if (sleeping) "Сон продолжается. Отметьте пробуждение, когда малыш проснётся."
+                    else "Ориентируйтесь на признаки усталости. Отметьте сон, когда малыш уснёт.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else {
                 Text(
-                    wakeClock(expected / 300_000 * 300_000, now, zone),
-                    style = MaterialTheme.typography.displaySmall,
+                    "Около " + wakeClock(expected / 300_000 * 300_000, now, zone),
+                    style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 )
+                Text(
+                    "Ориентировочное окно",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 PredictionRange(earliest, expected, latest, now, zone)
+                Text(
+                    predictionExplanation(estimate, current, sleeping),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (expected < now)
+                    Text(
+                        "Ожидаемое время уже прошло; окно ещё открыто.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 if (sleeping && current != null) {
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
                         SleepNumber(
-                            "Всего",
+                            "Ожидается",
                             duration(expected - current.startedAt),
                             Modifier.weight(1f),
                         )
                         SleepNumber(
-                            if (now <= expected) "Осталось" else "Сверх прогноза",
+                            if (now <= expected) "До ориентира" else "После ориентира",
                             duration(kotlin.math.abs(expected - now)),
                             Modifier.weight(1f),
                         )
@@ -916,15 +1049,78 @@ private fun PredictionRange(earliest: Long, expected: Long, latest: Long, now: L
             )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(wakeClock(earliest, now, zone), style = MaterialTheme.typography.labelLarge)
-            Text(wakeClock(latest, now, zone), style = MaterialTheme.typography.labelLarge)
+            Text(
+                wakeClock(earliest, now, zone),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                wakeClock(latest, now, zone),
+                Modifier.weight(1f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                style = MaterialTheme.typography.labelLarge,
+            )
         }
     }
 }
 
-internal fun sleepStatusDuration(ms: Long): String {
-    val seconds = ms.coerceAtLeast(0) / 1_000
-    return if (seconds < 3_600) "${seconds / 60} мин ${seconds % 60} с" else duration(ms)
+internal fun sleepStatusDuration(ms: Long): String = duration(ms)
+
+internal fun predictionExplanation(
+    estimate: SleepEstimate?,
+    current: CurrentSleepEstimate?,
+    sleeping: Boolean,
+): String =
+    if (sleeping)
+        "По ${current?.samples ?: 0} похожим ${if (current?.night == true) "ночным" else "дневным"} снам: время начала и длительность. Это ориентир."
+    else
+        when (estimate?.model) {
+            "Личная адаптивная модель" ->
+                "По ${estimate.samples} периодам: время суток, предыдущий сон и сон за сутки."
+            "Личный ритм по времени суток" ->
+                "По ${estimate.samples} периодам бодрствования с учётом времени суток."
+            else -> "По ${estimate?.samples ?: 0} недавним периодам бодрствования."
+        } +
+            if (estimate?.preliminary == true) " Предварительный прогноз."
+            else " Время может отличаться."
+
+/** Crossing a start/end can change validity even without a new Room emission. */
+internal fun sessionValidityKey(events: List<BabyEvent>, now: Long): Int =
+    events.sumOf {
+        (if (it.startedAt <= now) 1 else 0) +
+            (if (it.endedAt != null && it.endedAt <= now) 1 else 0)
+    }
+
+@Composable
+internal fun rememberSleepClock(): State<Long> =
+    produceState(System.currentTimeMillis()) {
+        while (true) {
+            val now = System.currentTimeMillis()
+            value = now
+            delay(15_000 - now % 15_000)
+        }
+    }
+
+@Composable
+private fun rememberSleepZone(): ZoneId {
+    val context = LocalContext.current
+    var zone by remember { mutableStateOf(ZoneId.systemDefault()) }
+    DisposableEffect(context) {
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    zone = ZoneId.systemDefault()
+                }
+            }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            IntentFilter(Intent.ACTION_TIMEZONE_CHANGED),
+            ContextCompat.RECEIVER_EXPORTED,
+        )
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    return zone
 }
 
 @Composable

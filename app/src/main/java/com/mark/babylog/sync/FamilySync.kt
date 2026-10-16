@@ -14,6 +14,8 @@ import com.mark.babylog.data.*
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 
@@ -26,7 +28,13 @@ data class FamilySyncStatus(
 data class FamilyMember(val id: String, val displayName: String)
 
 class FamilySync(private val app: BabyLogApp) {
-    val status = MutableStateFlow(FamilySyncStatus())
+    private val preferences = app.getSharedPreferences("family_sync", Context.MODE_PRIVATE)
+    val status =
+        MutableStateFlow(
+            FamilySyncStatus(
+                lastSyncedAt = preferences.getLong("last_successful_sync", 0).takeIf { it > 0 }
+            )
+        )
     val members = MutableStateFlow<List<FamilyMember>>(emptyList())
     private val available
         get() = FirebaseApp.getApps(app).isNotEmpty()
@@ -35,6 +43,7 @@ class FamilySync(private val app: BabyLogApp) {
     private val dao
         get() = app.database.events()
 
+    private val syncMutex = Mutex()
     private val revisionKey = "family_revision"
 
     suspend fun createFamily(name: String): String {
@@ -134,26 +143,24 @@ class FamilySync(private val app: BabyLogApp) {
             .apply()
     }
 
-    suspend fun sync(): Boolean {
-        if (!available || dao.membership() == null) return true
-        status.value = FamilySyncStatus(running = true)
-        return try {
-            auth()
-            registerCurrentToken()
-            while (true) {
-                val pending = dao.pending()
-                if (pending.isEmpty()) break
-                pushBatch(pending)
+    suspend fun sync(): Boolean =
+        syncMutex.withLock {
+            if (!available || dao.membership() == null) return@withLock true
+            runFamilySync(status) {
+                auth()
+                registerCurrentToken()
+                while (true) {
+                    val pending = dao.pending()
+                    if (pending.isEmpty()) break
+                    pushBatch(pending)
+                }
+                pull()
+                preferences
+                    .edit()
+                    .putLong("last_successful_sync", System.currentTimeMillis())
+                    .apply()
             }
-            pull()
-            status.value = FamilySyncStatus(lastSyncedAt = System.currentTimeMillis())
-            true
-        } catch (error: Exception) {
-            Log.w("BabyLog", "Family sync failed", error)
-            status.value = FamilySyncStatus(error = error.message ?: "Ошибка синхронизации")
-            false
         }
-    }
 
     private suspend fun pushBatch(operations: List<SyncOperation>) {
         val commands =
@@ -165,36 +172,33 @@ class FamilySync(private val app: BabyLogApp) {
                     "occurredAt" to op.occurredAt,
                 )
             }
-        try {
-            FirebaseFunctions.getInstance()
-                .getHttpsCallable("processCommandsV2")
-                .call(mapOf("commands" to commands))
-                .await()
-            operations.forEach { dao.removeOperation(it.id) }
-        } catch (batchError: Exception) {
-            // The backend is deployed before the app, but keeping this fallback
-            // also lets an update drain legacy outbox rows during rollout.
-            operations.forEach { op ->
-                try {
-                    FirebaseFunctions.getInstance()
-                        .getHttpsCallable("processCommand")
-                        .call(
-                            mapOf(
-                                "commandId" to op.id,
-                                "command" to op.command,
-                                "payload" to jsonMap(JSONObject(op.payload)),
-                                "occurredAt" to op.occurredAt,
-                            )
+        pushWithLegacyFallback(
+            operations,
+            batch = {
+                FirebaseFunctions.getInstance()
+                    .getHttpsCallable("processCommandsV2")
+                    .call(mapOf("commands" to commands))
+                    .await()
+                operations.forEach { dao.removeOperation(it.id) }
+            },
+            legacy = { op ->
+                FirebaseFunctions.getInstance()
+                    .getHttpsCallable("processCommand")
+                    .call(
+                        mapOf(
+                            "commandId" to op.id,
+                            "command" to op.command,
+                            "payload" to jsonMap(JSONObject(op.payload)),
+                            "occurredAt" to op.occurredAt,
                         )
-                        .await()
-                    dao.removeOperation(op.id)
-                } catch (error: Exception) {
-                    dao.failOperation(op.id, error.message ?: "Ошибка синхронизации")
-                    error.addSuppressed(batchError)
-                    throw error
-                }
-            }
-        }
+                    )
+                    .await()
+                dao.removeOperation(op.id)
+            },
+            failed = { op, error ->
+                dao.failOperation(op.id, error.message ?: "Ошибка синхронизации")
+            },
+        )
     }
 
     suspend fun pull(adoptSharedProfile: Boolean = false) {
@@ -259,7 +263,7 @@ class FamilySync(private val app: BabyLogApp) {
         listeners +=
             changes("events").addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    status.value = FamilySyncStatus(error = error.message)
+                    status.value = status.value.copy(error = "Не удалось синхронизировать")
                     return@addSnapshotListener
                 }
                 snapshot ?: return@addSnapshotListener
@@ -269,18 +273,17 @@ class FamilySync(private val app: BabyLogApp) {
                             snapshot.documentChanges.map { it.document.data }
                         )
                         AppSurfaceSync.refresh(app)
-                    } catch (error: Throwable) {
-                        status.value =
-                            FamilySyncStatus(
-                                error = error.message ?: "Ошибка realtime-синхронизации"
-                            )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        status.value = status.value.copy(error = "Не удалось синхронизировать")
                     }
                 }
             }
         listeners +=
             changes("reminders").addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    status.value = FamilySyncStatus(error = error.message)
+                    status.value = status.value.copy(error = "Не удалось синхронизировать")
                     return@addSnapshotListener
                 }
                 snapshot ?: return@addSnapshotListener
@@ -289,18 +292,17 @@ class FamilySync(private val app: BabyLogApp) {
                         app.reminderRepository.applyRemoteReminders(
                             snapshot.documentChanges.map { it.document.data }
                         )
-                    } catch (error: Throwable) {
-                        status.value =
-                            FamilySyncStatus(
-                                error = error.message ?: "Ошибка синхронизации напоминаний"
-                            )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        status.value = status.value.copy(error = "Не удалось синхронизировать")
                     }
                 }
             }
         listeners +=
             changes("reminderCompletions").addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    status.value = FamilySyncStatus(error = error.message)
+                    status.value = status.value.copy(error = "Не удалось синхронизировать")
                     return@addSnapshotListener
                 }
                 snapshot ?: return@addSnapshotListener
@@ -309,11 +311,10 @@ class FamilySync(private val app: BabyLogApp) {
                         app.reminderRepository.applyRemoteCompletions(
                             snapshot.documentChanges.map { it.document.data }
                         )
-                    } catch (error: Throwable) {
-                        status.value =
-                            FamilySyncStatus(
-                                error = error.message ?: "Ошибка синхронизации выполненного"
-                            )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        status.value = status.value.copy(error = "Не удалось синхронизировать")
                     }
                 }
             }
@@ -396,3 +397,59 @@ class BabyLogMessagingService : com.google.firebase.messaging.FirebaseMessagingS
         SyncWorker.enqueue(this)
     }
 }
+
+internal suspend fun runFamilySync(
+    status: MutableStateFlow<FamilySyncStatus>,
+    now: () -> Long = System::currentTimeMillis,
+    work: suspend () -> Unit,
+): Boolean {
+    status.value = status.value.copy(running = true, error = null)
+    return try {
+        work()
+        status.value = FamilySyncStatus(lastSyncedAt = now())
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        Log.w("BabyLog", "Family sync failed", error)
+        status.value = status.value.copy(error = "Не удалось синхронизировать")
+        false
+    } finally {
+        status.value = status.value.copy(running = false)
+    }
+}
+
+internal suspend fun <T> pushWithLegacyFallback(
+    operations: List<T>,
+    batch: suspend () -> Unit,
+    legacy: suspend (T) -> Unit,
+    failed: suspend (T, Exception) -> Unit,
+) {
+    try {
+        batch()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (batchError: Exception) {
+        // Retain compatibility with the legacy endpoint during rollout.
+        operations.forEach { op ->
+            try {
+                legacy(op)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                failed(op, error)
+                if (error !== batchError) error.addSuppressed(batchError)
+                throw error
+            }
+        }
+    }
+}
+
+internal suspend fun <T> familyResult(block: suspend () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        Result.failure(error)
+    }

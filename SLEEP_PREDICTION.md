@@ -182,8 +182,9 @@ refresh period. Real overlaps and sync conflicts still appear in history.
 
 ## Dashboard refresh and presentation
 
-The elapsed-duration leaf owns its one-second clock and exposes hours/minutes via
-`derivedStateOf`. It does not invalidate the whole screen each second. Prediction
+The elapsed-duration leaf owns its one-second clock and uses `derivedStateOf` to
+show seconds for the first minute, then hours/minutes. It does not invalidate the whole screen each second.
+Prediction
 refresh stays at 15 seconds; the chart and totals receive minute time inputs.
 Historical session validation is remembered until events or start/end validity
 boundaries change. Timezone broadcasts invalidate zone-dependent calculations;
@@ -198,3 +199,6 @@ process recreation. Cancellation propagates through sync, batch/legacy requests,
 realtime handlers, and family action results; it does not become a retry/failure.
 
 Review actual before/after renders in [the preview gallery](art/dashboard-review/README.md).
+
+Recorded graph blocks have no inline start-time text. Time remains available on
+the axis, in accessibility descriptions, and in history.

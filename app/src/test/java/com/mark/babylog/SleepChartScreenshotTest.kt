@@ -116,6 +116,12 @@ class SleepChartScreenshotTest {
         }
 
     @Test
+    fun sleepStatus_firstMinuteShowsSeconds() =
+        paparazzi.snapshot {
+            BabyTheme { SleepStatusCard(null, now - 25_000, now, zone, {}, {}, {}) }
+        }
+
+    @Test
     fun sleepStatus_showsSeconds() =
         paparazzi.snapshot {
             BabyTheme { SleepStatusCard(null, now - 125_000, now, zone, {}, {}, {}) }

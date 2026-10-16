@@ -27,8 +27,9 @@ Recorded blocks are solid; projected sleep blocks are hollow. The graph contains
 no confidence bands. Its labels and grid share the same whole-hour ticks at every
 zoom, with civil-time labels on an elapsed-time axis across DST.
 
-The one-second timer is confined to the elapsed-duration leaf, which publishes
-hours/minutes only. Predictions retain their 15-second cadence; chart/totals use
+The one-second timer is confined to the elapsed-duration leaf, which shows seconds
+for the first minute and hours/minutes afterwards. Predictions retain their
+15-second cadence; chart/totals use
 minute time inputs. Session validation is cached until events or actual validity
 boundaries change. Compose tests measure parent recomposition, chart measurement,
 and marker movement; they do not claim that recomposition equals a canvas redraw.
@@ -44,7 +45,7 @@ these deterministic previews.
 - Gradle 8.9 / Java 17: `spotlessCheck testDebugUnitTest lintDebug assembleDebug` passed.
 - 92 behavioral tests passed, including cancellation, sync display state, elapsed-clock
   isolation, marker movement, large-text controls, retained forecasts, and DST ticks.
-- `verifyPaparazziDebug` passed: 39 screenshot cases (131 tests including behavioral cases).
+- `verifyPaparazziDebug` passed: 40 screenshot cases (132 tests including behavioral cases).
 - Lint: 0 errors, 65 warnings. The app bar stays 64 dp high; sync and main actions
   meet the checked 48 dp minimum at 150% text.
 - Backend: 10 tests passed. Release tooling: 8 tests passed.
@@ -53,3 +54,6 @@ these deterministic previews.
 The initial screenshot verification exposed the intended visual differences. Those
 rendered results were inspected before recording affected goldens; unrelated
 baselines were retained. The final comparison passes against the reviewed images.
+
+[First-minute seconds preview](after/first-minute.png). Inline start-time labels
+inside recorded blocks have been removed; axis labels remain aligned with the grid.

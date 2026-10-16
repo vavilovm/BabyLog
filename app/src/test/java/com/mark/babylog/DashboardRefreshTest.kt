@@ -54,7 +54,7 @@ class DashboardRefreshTest {
             BabyTheme {
                 Column {
                     Text("${second.intValue}")
-                    SleepElapsedText(now - 120_000, liveClock)
+                    SleepElapsedText(now - 58_000, liveClock)
                     SideEffect { compositions++ }
                     SleepChart(
                         events,
@@ -68,6 +68,7 @@ class DashboardRefreshTest {
                 }
             }
         }
+        compose.onNodeWithText("58 с").assertIsDisplayed()
         compose.waitForIdle()
         var initialMeasures = 0
         val initialMarker =
@@ -87,6 +88,16 @@ class DashboardRefreshTest {
         compose.runOnIdle {
             assertEquals("Leaf timer must not recompose parent", initialCompositions, compositions)
             assertEquals("Second updates must not remeasure chart", initialMeasures, measures)
+            liveClock.longValue += 1_000
+        }
+        compose.onNodeWithText("1 мин").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(
+                "Minute transition must not recompose parent",
+                initialCompositions,
+                compositions,
+            )
+            assertEquals("Minute transition must not remeasure chart", initialMeasures, measures)
             second.intValue++
         }
         compose.waitForIdle()

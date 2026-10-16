@@ -661,21 +661,8 @@ internal fun SleepChart(
                                         contentDescription =
                                             "${day.format(dateFormat)}: сон ${graphClock(e.startedAt, zone, axis.changesOffset)} — ${e.endedAt?.let { graphClock(it, zone, axis.changesOffset) } ?: "сейчас"}"
                                     }
-                                    .clickable { onSelect(e) },
-                                contentAlignment = Alignment.CenterStart,
-                            ) {
-                                if (width * (right - left) > 64.dp)
-                                    Text(
-                                        clock(e.startedAt, zone),
-                                        Modifier.padding(horizontal = 4.dp),
-                                        color =
-                                            if (e.syncState == SyncState.CONFLICT)
-                                                MaterialTheme.colorScheme.onError
-                                            else MaterialTheme.colorScheme.onPrimary,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                    )
-                            }
+                                    .clickable { onSelect(e) }
+                            )
                         }
                     forecast
                         .filter { it.start < end && it.end > start && visible(it.start, it.end) }
@@ -1064,7 +1051,10 @@ private fun PredictionRange(earliest: Long, expected: Long, latest: Long, now: L
     }
 }
 
-internal fun sleepStatusDuration(ms: Long): String = duration(ms)
+internal fun sleepStatusDuration(ms: Long): String {
+    val elapsed = ms.coerceAtLeast(0)
+    return if (elapsed < 60_000) "${elapsed / 1_000} с" else duration(elapsed)
+}
 
 internal fun predictionExplanation(
     estimate: SleepEstimate?,

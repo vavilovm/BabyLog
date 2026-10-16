@@ -4,10 +4,12 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -16,7 +18,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +32,7 @@ import com.mark.babylog.sleep.*
 import java.time.*
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
 private val dateFormat = DateTimeFormatter.ofPattern("dd.MM.yyyy")
@@ -100,6 +106,10 @@ fun SleepScreen(
     var editingReminder by remember { mutableStateOf<BabyReminder?>(null) }
     var editing by remember { mutableStateOf<BabyEvent?>(null) }
     var adding by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val history = remember(events) { events.sortedByDescending { it.startedAt } }
+    var selectedSleep by remember { mutableStateOf<String?>(null) }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.errors.collect { snack.showSnackbar(it) } }
     LaunchedEffect(initialInvite) {
@@ -130,6 +140,7 @@ fun SleepScreen(
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
+            state = listState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -177,7 +188,17 @@ fun SleepScreen(
                     now,
                     zone,
                     days,
-                    onSelect = { editing = it },
+                    onSelect = { event ->
+                        selectedSleep = event.remoteId
+                        scope.launch {
+                            // History is the final section, followed only by the export button.
+                            val index =
+                                listState.layoutInfo.totalItemsCount - history.size - 1 +
+                                    history.indexOfFirst { it.remoteId == event.remoteId }
+                            if (history.any { it.remoteId == event.remoteId })
+                                listState.animateScrollToItem(index)
+                        }
+                    },
                     current = prediction.current,
                 )
             }
@@ -200,8 +221,17 @@ fun SleepScreen(
                 )
             }
             item { Text("История сна", style = MaterialTheme.typography.titleLarge) }
-            items(events.sortedByDescending { it.startedAt }, key = { it.remoteId }) { e ->
-                OutlinedCard(Modifier.fillMaxWidth().clickable { editing = e }) {
+            items(history, key = { it.remoteId }) { e ->
+                OutlinedCard(
+                    Modifier.fillMaxWidth().clickable { editing = e },
+                    colors =
+                        CardDefaults.outlinedCardColors(
+                            containerColor =
+                                if (selectedSleep == e.remoteId)
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface
+                        ),
+                ) {
                     Column(Modifier.padding(16.dp)) {
                         Text(
                             Instant.ofEpochMilli(e.startedAt).atZone(zone).format(dateFormat),
@@ -451,20 +481,69 @@ internal fun SleepChart(
 ) {
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val colour = MaterialTheme.colorScheme.primary
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 54.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            listOf("00", "06", "12", "18", "24").forEach {
-                Text(it, style = MaterialTheme.typography.labelSmall)
+    var viewport by remember { mutableStateOf(SleepChartViewport()) }
+    Column(
+        Modifier.testTag("sleep-chart").pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                var transforming = false
+                var scrolling = false
+                var horizontal = 0f
+                var vertical = 0f
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val pan = event.calculatePan()
+                    horizontal += pan.x
+                    vertical += pan.y
+                    if (
+                        !transforming &&
+                            kotlin.math.abs(vertical) > viewConfiguration.touchSlop &&
+                            kotlin.math.abs(vertical) > kotlin.math.abs(horizontal)
+                    )
+                        scrolling = true
+                    val multiTouch = event.changes.count { it.pressed } >= 2
+                    if (
+                        multiTouch ||
+                            (!scrolling &&
+                                viewport.scale > 1f &&
+                                kotlin.math.abs(horizontal) > viewConfiguration.touchSlop &&
+                                kotlin.math.abs(horizontal) > kotlin.math.abs(vertical))
+                    ) {
+                        transforming = true
+                    }
+                    if (transforming) {
+                        val center = event.calculateCentroid(useCurrent = false)
+                        if (center.isSpecified && center.x.isFinite())
+                            viewport =
+                                viewport.transform(
+                                    event.calculateZoom(),
+                                    (center.x - 54.dp.toPx()) / (size.width - 54.dp.toPx()),
+                                    pan.x / (size.width - 54.dp.toPx()),
+                                )
+                        event.changes.forEach { it.consume() }
+                    }
+                } while (event.changes.any { it.pressed })
             }
+        },
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Разведите пальцы для масштаба · нажмите сон для истории",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+            if (viewport.scale > 1f)
+                TextButton(onClick = { viewport = SleepChartViewport() }) { Text("Весь день") }
         }
-        sleepChartDays(forecast, now, zone, days, current).forEach { day ->
+        val chartDays = sleepChartDays(forecast, now, zone, days, current)
+        chartDays.forEachIndexed { index, day ->
             val axis = SleepDayAxis(day, zone)
             val start = axis.start
             val end = axis.end
-            fun fraction(t: Long): Float = axis.fraction(t)
+            fun fraction(t: Long): Float = viewport.fraction(axis.fraction(t))
+            fun visible(a: Long, b: Long): Boolean =
+                axis.fraction(b) > viewport.start && axis.fraction(a) < viewport.end
             if (axis.changesOffset) {
                 val from = Instant.ofEpochMilli(start).atZone(zone).offset
                 val to = Instant.ofEpochMilli(end - 1).atZone(zone).offset
@@ -472,18 +551,24 @@ internal fun SleepChart(
                     "${day.format(DateTimeFormatter.ofPattern("dd.MM"))} · ${duration(axis.duration)} · UTC$from → UTC$to",
                     style = MaterialTheme.typography.labelSmall,
                 )
+            }
+            if (
+                index == 0 ||
+                    axis.changesOffset ||
+                    SleepDayAxis(chartDays[index - 1], zone).changesOffset
+            )
                 Row(
                     Modifier.fillMaxWidth().padding(start = 54.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    listOf(0f, 0.25f, 0.5f, 0.75f, 1f).forEach { tick ->
+                    (0..4).forEach { tick ->
+                        val f = viewport.start + (viewport.end - viewport.start) * tick / 4f
                         Text(
-                            if (tick == 1f) "24:00" else clock(axis.timeAt(tick), zone),
+                            if (f >= 1f) "24:00" else clock(axis.timeAt(f), zone),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
                 }
-            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     day.format(DateTimeFormatter.ofPattern("dd.MM")),
@@ -497,19 +582,33 @@ internal fun SleepChart(
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     val width = maxWidth
-                    listOf(0.25f, 0.5f, 0.75f).forEach { tick ->
-                        Box(
-                            Modifier.offset(x = width * tick)
-                                .width(1.dp)
-                                .fillMaxHeight()
-                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                        )
-                    }
+                    val step =
+                        when {
+                            viewport.scale >= 4f -> 1
+                            viewport.scale >= 2f -> 2
+                            else -> 6
+                        }
+                    (start until end step 3_600_000L)
+                        .filter { Instant.ofEpochMilli(it).atZone(zone).hour % step == 0 }
+                        .map { axis.fraction(it) }
+                        .filter { it > viewport.start && it < viewport.end }
+                        .forEach { time ->
+                            val tick = viewport.fraction(time)
+                            Box(
+                                Modifier.offset(x = width * tick)
+                                    .width(1.dp)
+                                    .fillMaxHeight()
+                                    .background(
+                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                                    )
+                            )
+                        }
                     events
                         .filter {
                             it.sleepRecordVersion == 1 &&
                                 it.startedAt < end &&
-                                (it.endedAt ?: now) > start
+                                (it.endedAt ?: now) > start &&
+                                visible(it.startedAt, it.endedAt ?: now)
                         }
                         .forEach { e ->
                             val left = fraction(e.startedAt)
@@ -532,11 +631,24 @@ internal fun SleepChart(
                                         contentDescription =
                                             "${day.format(dateFormat)}: сон ${graphClock(e.startedAt, zone, axis.changesOffset)} — ${e.endedAt?.let { graphClock(it, zone, axis.changesOffset) } ?: "сейчас"}"
                                     }
-                                    .clickable { onSelect(e) }
-                            )
+                                    .clickable { onSelect(e) },
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                if (width * (right - left) > 64.dp)
+                                    Text(
+                                        clock(e.startedAt, zone),
+                                        Modifier.padding(horizontal = 4.dp),
+                                        color =
+                                            if (e.syncState == SyncState.CONFLICT)
+                                                MaterialTheme.colorScheme.onError
+                                            else MaterialTheme.colorScheme.onPrimary,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                    )
+                            }
                         }
                     forecast
-                        .filter { it.start < end && it.end > start }
+                        .filter { it.start < end && it.end > start && visible(it.start, it.end) }
                         .forEach { f ->
                             val left = fraction(f.start)
                             val right = fraction(f.end)
@@ -554,7 +666,7 @@ internal fun SleepChart(
                         }
                     current
                         ?.expectedWake
-                        ?.takeIf { it >= start && it < end }
+                        ?.takeIf { it >= start && it < end && visible(it, it + 1) }
                         ?.let { time ->
                             Box(
                                 Modifier.offset(x = (width - 3.dp) * fraction(time))
@@ -566,7 +678,7 @@ internal fun SleepChart(
                                     }
                             )
                         }
-                    if (day == today)
+                    if (day == today && visible(now, now + 1))
                         Box(
                             Modifier.offset(x = width * fraction(now))
                                 .width(2.dp)
@@ -577,7 +689,7 @@ internal fun SleepChart(
             }
             current
                 ?.expectedWake
-                ?.takeIf { it >= start && it < end }
+                ?.takeIf { it >= start && it < end && visible(it, it + 1) }
                 ?.let { time ->
                     Text(
                         "● ${clock(time / 300_000 * 300_000, zone)}",

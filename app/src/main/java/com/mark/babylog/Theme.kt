@@ -17,7 +17,11 @@ private val Light =
 
 internal val Dark =
     darkColorScheme(
-        primary = Color(0xFFD0BCFF),
+        primary = Color(0xFFB7A4DB),
+        onPrimary = Color(0xFF241A38),
+        primaryContainer = Color(0xFF373044),
+        onPrimaryContainer = Color(0xFFE4DCEC),
+        surfaceVariant = Color(0xFF302D34),
         secondary = Color(0xFFEFB8C8),
         background = Color(0xFF141218),
         surface = Color(0xFF211F26),

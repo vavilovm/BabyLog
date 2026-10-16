@@ -5,6 +5,40 @@ import org.junit.Test
 
 class SleepChartViewportTest {
     @Test
+    fun labelsAndGridShareWholeHourTicksAtEveryZoomAndAcrossDst() {
+        val zone = java.time.ZoneId.of("Europe/Amsterdam")
+        listOf(
+                java.time.LocalDate.of(2026, 10, 15),
+                java.time.LocalDate.of(2026, 10, 25),
+                java.time.LocalDate.of(2026, 3, 29),
+            )
+            .forEach { day ->
+                val axis = com.mark.babylog.sleep.SleepDayAxis(day, zone)
+                listOf(
+                        SleepChartViewport(),
+                        SleepChartViewport(2f, 0.13f),
+                        SleepChartViewport(8f, 0.5f),
+                    )
+                    .forEach { viewport ->
+                        val ticks = sleepChartTicks(axis, viewport)
+                        org.junit.Assert.assertTrue(ticks.isNotEmpty())
+                        ticks.forEach { time ->
+                            org.junit.Assert.assertEquals(
+                                0,
+                                java.time.Instant.ofEpochMilli(time).atZone(zone).minute,
+                            )
+                            org.junit.Assert.assertTrue(
+                                axis.fraction(time) >= viewport.start - 0.00001f
+                            )
+                            org.junit.Assert.assertTrue(
+                                axis.fraction(time) <= viewport.end + 0.00001f
+                            )
+                        }
+                    }
+            }
+    }
+
+    @Test
     fun pinchKeepsSelectedTimeUnderFingersWhilePanning() {
         val original = SleepChartViewport()
         val zoomed = original.transform(4f, 0.65f, 0.1f)

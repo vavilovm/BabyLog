@@ -134,9 +134,9 @@ fun SleepScreen(
                 syncStatus,
                 zone,
                 vm::retrySync,
-            ) {
-                settings = true
-            }
+                onProfile = { settings = true },
+                updateAction = { UpdateButton() },
+            )
         },
     ) { padding ->
         LazyColumn(
@@ -482,6 +482,7 @@ internal fun SleepAppBar(
     zone: ZoneId,
     onRetry: () -> Unit,
     onProfile: () -> Unit,
+    updateAction: @Composable () -> Unit = {},
 ) {
     TopAppBar(
         title = {
@@ -504,6 +505,7 @@ internal fun SleepAppBar(
             }
         },
         actions = {
+            updateAction()
             SyncStatusAction(family, pendingCount, syncStatus, zone, onRetry)
             TextButton(onClick = onProfile, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("Профиль")

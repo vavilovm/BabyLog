@@ -356,11 +356,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         fun enqueue(context: Context) {
             val constraints =
                 Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            // Ordinary queued work also runs on pre-Android 12 without a foreground service.
             val request =
                 OneTimeWorkRequestBuilder<SyncWorker>()
                     .setConstraints(constraints)
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
-                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
             WorkManager.getInstance(context)
                 .enqueueUniqueWork("babylog-sync", ExistingWorkPolicy.APPEND_OR_REPLACE, request)

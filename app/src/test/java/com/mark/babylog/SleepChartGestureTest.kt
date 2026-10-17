@@ -21,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
+@OptIn(ExperimentalTestApi::class)
 @RunWith(RobolectricTestRunner::class)
 class SleepChartGestureTest {
     @get:Rule val compose = createComposeRule()
@@ -36,7 +37,7 @@ class SleepChartGestureTest {
         )
 
     @Test
-    fun pinchAcrossRowsZoomsWithoutSelectingSleepAndResetRestoresDay() {
+    fun pinchDoesNotZoomOrSelectSleepAndTapStillOpensHistory() {
         var selected: BabyEvent? = null
         compose.setContent {
             BabyTheme {
@@ -60,16 +61,66 @@ class SleepChartGestureTest {
             up(0)
             up(1)
         }
-        compose.onNodeWithText("Весь день").assertIsDisplayed()
         compose.runOnIdle { assertNull(selected) }
-        compose.onNodeWithText("Весь день").performClick()
         compose.onNodeWithText("Весь день").assertDoesNotExist()
         compose.onNodeWithContentDescription("15.10.2026: сон 09:00 — 11:00").performClick()
         compose.runOnIdle { assertEquals(event, selected) }
     }
 
     @Test
-    fun verticalSwipeStillScrollsPageAfterZooming() {
+    fun hoverShowsExactTimeAndSleepRangeAndExitClearsGuide() {
+        compose.setContent {
+            BabyTheme {
+                Surface(Modifier.fillMaxWidth()) {
+                    SleepChart(listOf(event), emptyList(), start + 13 * 3_600_000, zone, 7, {})
+                }
+            }
+        }
+        val row = compose.onNodeWithTag("sleep-chart-row-2026-10-15")
+        row.performMouseInput { enter(Offset(width * 10f / 24f, height / 2f)) }
+        compose
+            .onNodeWithTag("sleep-chart-time")
+            .assertTextContains("15.10 · 10:00 · сон 09:00 — 11:00")
+        compose.onNodeWithTag("sleep-chart-time-guide-2026-10-15").assertExists()
+        compose.onNodeWithTag("sleep-chart-time-badge").assertTextEquals("10:00")
+        row.performMouseInput { moveTo(Offset(width / 2f, height / 2f)) }
+        compose.onNodeWithTag("sleep-chart-time").assertTextContains("15.10 · 12:00")
+        row.performMouseInput { exit() }
+        compose.onNodeWithTag("sleep-chart-time-guide-2026-10-15").assertDoesNotExist()
+    }
+
+    @Test
+    fun longPressAndDragInspectsWithoutSelectingSleep() {
+        var selected: BabyEvent? = null
+        compose.setContent {
+            BabyTheme {
+                Surface(Modifier.fillMaxWidth()) {
+                    SleepChart(
+                        listOf(event),
+                        emptyList(),
+                        start + 13 * 3_600_000,
+                        zone,
+                        7,
+                        { selected = it },
+                    )
+                }
+            }
+        }
+        val row = compose.onNodeWithTag("sleep-chart-row-2026-10-15")
+        row.performTouchInput {
+            down(Offset(width * 10f / 24f, height / 2f))
+            advanceEventTime(700)
+            moveTo(Offset(width / 2f, height / 2f))
+        }
+        compose.onNodeWithTag("sleep-chart-time").assertTextContains("15.10 · 12:00")
+        compose.runOnIdle { assertNull(selected) }
+        row.performTouchInput { up() }
+        compose.onNodeWithTag("sleep-chart-time-guide-2026-10-15").assertDoesNotExist()
+        compose.runOnIdle { assertNull(selected) }
+    }
+
+    @Test
+    fun verticalSwipeStillScrollsPage() {
         lateinit var scroll: androidx.compose.foundation.lazy.LazyListState
         compose.setContent {
             BabyTheme {
@@ -90,7 +141,7 @@ class SleepChartGestureTest {
             up(0)
             up(1)
         }
-        compose.onNodeWithText("Весь день").assertIsDisplayed()
+        compose.onNodeWithText("Весь день").assertDoesNotExist()
         compose.onNodeWithTag("sleep-chart").performTouchInput { swipeUp() }
         compose.runOnIdle {
             assertTrue(scroll.firstVisibleItemIndex > 0 || scroll.firstVisibleItemScrollOffset > 0)

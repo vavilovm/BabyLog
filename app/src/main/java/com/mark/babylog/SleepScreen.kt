@@ -23,7 +23,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
@@ -32,6 +31,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -526,61 +526,41 @@ internal fun SleepChart(
 ) {
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val colour = MaterialTheme.colorScheme.primary
-    var viewport by remember(initialViewport) { mutableStateOf(initialViewport) }
-    Column(
-        modifier.testTag("sleep-chart").pointerInput(Unit) {
-            awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                var transforming = false
-                var scrolling = false
-                var horizontal = 0f
-                var vertical = 0f
-                do {
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                    val pan = event.calculatePan()
-                    horizontal += pan.x
-                    vertical += pan.y
-                    if (
-                        !transforming &&
-                            kotlin.math.abs(vertical) > viewConfiguration.touchSlop &&
-                            kotlin.math.abs(vertical) > kotlin.math.abs(horizontal)
-                    )
-                        scrolling = true
-                    val multiTouch = event.changes.count { it.pressed } >= 2
-                    if (
-                        multiTouch ||
-                            (!scrolling &&
-                                viewport.scale > 1f &&
-                                kotlin.math.abs(horizontal) > viewConfiguration.touchSlop &&
-                                kotlin.math.abs(horizontal) > kotlin.math.abs(vertical))
-                    ) {
-                        transforming = true
-                    }
-                    if (transforming) {
-                        val center = event.calculateCentroid(useCurrent = false)
-                        if (center.isSpecified && center.x.isFinite())
-                            viewport =
-                                viewport.transform(
-                                    event.calculateZoom(),
-                                    (center.x - 54.dp.toPx()) / (size.width - 54.dp.toPx()),
-                                    pan.x / (size.width - 54.dp.toPx()),
-                                )
-                        event.changes.forEach { it.consume() }
-                    }
-                } while (event.changes.any { it.pressed })
+    val viewport = initialViewport
+    var inspection by
+        remember(days, zone, initialViewport) { mutableStateOf<Pair<LocalDate, Float>?>(null) }
+    val textMeasurer = rememberTextMeasurer()
+    val barTextStyle = MaterialTheme.typography.labelSmall
+    Column(modifier.testTag("sleep-chart"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "Наведите или удерживайте для времени · нажмите сон для истории",
+            style = MaterialTheme.typography.labelSmall,
+        )
+        val inspected = inspection
+        val inspectedAxis = inspected?.let { SleepDayAxis(it.first, zone) }
+        val inspectedTime =
+            inspected?.let {
+                inspectedAxis!!.start +
+                    (inspectedAxis.duration * (viewport.start + it.second / viewport.scale))
+                        .toLong()
             }
-        },
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Разведите пальцы для масштаба · нажмите сон для истории",
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.labelSmall,
-            )
-            if (viewport.scale > 1f)
-                TextButton(onClick = { viewport = SleepChartViewport() }) { Text("Весь день") }
-        }
+        val inspectedSleep =
+            inspectedTime?.let { time ->
+                events.firstOrNull {
+                    it.sleepRecordVersion == 1 && it.startedAt <= time && (it.endedAt ?: now) > time
+                }
+            }
+        Text(
+            if (inspected != null && inspectedAxis != null && inspectedTime != null)
+                "${Instant.ofEpochMilli(inspectedTime).atZone(zone).format(DateTimeFormatter.ofPattern("dd.MM"))} · ${graphClock(inspectedTime, zone, inspectedAxis.changesOffset)}" +
+                    (inspectedSleep?.let {
+                        " · сон ${graphClock(it.startedAt, zone, inspectedAxis.changesOffset)} — ${it.endedAt?.let { end -> graphClock(end, zone, inspectedAxis.changesOffset) } ?: "сейчас"}"
+                    } ?: "")
+            else "Время появится при наведении или удержании",
+            modifier = Modifier.testTag("sleep-chart-time").heightIn(min = 32.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
         val chartDays = sleepChartDays(forecast, now, zone, days, current)
         chartDays.forEachIndexed { index, day ->
             val axis = SleepDayAxis(day, zone)
@@ -613,6 +593,41 @@ internal fun SleepChart(
                 BoxWithConstraints(
                     Modifier.weight(1f)
                         .height(38.dp)
+                        .testTag("sleep-chart-row-$day")
+                        .pointerInput(day, viewport) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    when (event.type) {
+                                        PointerEventType.Enter,
+                                        PointerEventType.Move -> {
+                                            if (event.changes.none { it.pressed }) {
+                                                val x = event.changes.first().position.x
+                                                inspection =
+                                                    day to (x / size.width).coerceIn(0f, 1f)
+                                            }
+                                        }
+                                        PointerEventType.Exit -> {
+                                            if (inspection?.first == day) inspection = null
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .pointerInput(day, viewport) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { position ->
+                                    inspection = day to (position.x / size.width).coerceIn(0f, 1f)
+                                },
+                                onDrag = { change, _ ->
+                                    inspection =
+                                        day to (change.position.x / size.width).coerceIn(0f, 1f)
+                                    change.consume()
+                                },
+                                onDragEnd = { inspection = null },
+                                onDragCancel = { inspection = null },
+                            )
+                        }
                         .clip(RoundedCornerShape(6.dp))
                         .background(
                             if (day == today) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f)
@@ -661,8 +676,32 @@ internal fun SleepChart(
                                         contentDescription =
                                             "${day.format(dateFormat)}: сон ${graphClock(e.startedAt, zone, axis.changesOffset)} — ${e.endedAt?.let { graphClock(it, zone, axis.changesOffset) } ?: "сейчас"}"
                                     }
-                                    .clickable { onSelect(e) }
-                            )
+                                    .clickable { onSelect(e) },
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                val label = graphClock(e.startedAt, zone, axis.changesOffset)
+                                val labelWidth =
+                                    textMeasurer.measure(label, barTextStyle).size.width
+                                val visibleWidth = width * (right - left)
+                                if (
+                                    e.startedAt >= start &&
+                                        axis.fraction(e.startedAt) >= viewport.start &&
+                                        with(androidx.compose.ui.platform.LocalDensity.current) {
+                                            visibleWidth.toPx() >= labelWidth + 8.dp.toPx()
+                                        }
+                                ) {
+                                    Text(
+                                        label,
+                                        Modifier.padding(horizontal = 4.dp),
+                                        color =
+                                            if (e.syncState == SyncState.CONFLICT)
+                                                MaterialTheme.colorScheme.onError
+                                            else MaterialTheme.colorScheme.onPrimary,
+                                        style = barTextStyle,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
                         }
                     forecast
                         .filter { it.start < end && it.end > start && visible(it.start, it.end) }
@@ -709,6 +748,50 @@ internal fun SleepChart(
                                 .background(MaterialTheme.colorScheme.tertiary)
                                 .semantics { contentDescription = "Сейчас ${clock(now, zone)}" }
                         )
+                    inspection?.let { (_, position) ->
+                        Box(
+                            Modifier.offset(x = (width * position).coerceAtMost(width - 1.dp))
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.onSurface)
+                                .testTag("sleep-chart-time-guide-$day")
+                        )
+                        if (inspection?.first == day && inspectedTime != null) {
+                            Layout(
+                                modifier = Modifier.fillMaxSize(),
+                                content = {
+                                    Text(
+                                        graphClock(inspectedTime, zone, axis.changesOffset),
+                                        Modifier.testTag("sleep-chart-time-badge")
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(MaterialTheme.colorScheme.inverseSurface)
+                                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                    )
+                                },
+                            ) { measurables, constraints ->
+                                val label =
+                                    measurables
+                                        .single()
+                                        .measure(constraints.copy(minWidth = 0, minHeight = 0))
+                                layout(constraints.maxWidth, constraints.maxHeight) {
+                                    label.placeRelative(
+                                        (constraints.maxWidth * position)
+                                            .toInt()
+                                            .coerceIn(
+                                                0,
+                                                (constraints.maxWidth - label.width).coerceAtLeast(
+                                                    0
+                                                ),
+                                            ),
+                                        0,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
             current

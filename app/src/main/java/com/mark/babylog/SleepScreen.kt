@@ -6,6 +6,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,7 +22,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -23,6 +32,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
@@ -40,7 +50,6 @@ import com.mark.babylog.sleep.*
 import java.time.*
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
 private val dateFormat = DateTimeFormatter.ofPattern("dd.MM.yyyy")
@@ -83,7 +92,6 @@ fun SleepScreen(
     val profileLoaded by vm.profileLoaded.collectAsStateWithLifecycle()
     val events by vm.sleepEvents.collectAsStateWithLifecycle()
     val membership by vm.membership.collectAsStateWithLifecycle()
-    val reminders by vm.reminderState.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
     val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
     val clockTick by rememberSleepClock()
@@ -106,15 +114,9 @@ fun SleepScreen(
     var days by remember { mutableIntStateOf(7) }
     var settings by remember { mutableStateOf(false) }
     var family by remember { mutableStateOf(initialInvite != null) }
-    var reminderSettings by remember { mutableStateOf(false) }
-    var reminderEditor by remember { mutableStateOf(false) }
-    var editingReminder by remember { mutableStateOf<BabyReminder?>(null) }
     var editing by remember { mutableStateOf<BabyEvent?>(null) }
     var adding by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     val history = remember(events) { events.sortedByDescending { it.startedAt } }
-    var selectedSleep by remember { mutableStateOf<String?>(null) }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.errors.collect { snack.showSnackbar(it) } }
     LaunchedEffect(initialInvite) {
@@ -141,7 +143,6 @@ fun SleepScreen(
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
-            state = listState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -192,17 +193,8 @@ fun SleepScreen(
                     displayNow,
                     zone,
                     days,
-                    onSelect = { event ->
-                        selectedSleep = event.remoteId
-                        scope.launch {
-                            // History is the final section, followed only by the export button.
-                            val index =
-                                listState.layoutInfo.totalItemsCount - history.size - 1 +
-                                    history.indexOfFirst { it.remoteId == event.remoteId }
-                            if (history.any { it.remoteId == event.remoteId })
-                                listState.animateScrollToItem(index)
-                        }
-                    },
+                    onSelect = {},
+                    onEdit = { editing = it },
                     current = prediction.current,
                 )
             }
@@ -211,29 +203,11 @@ fun SleepScreen(
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     TextButton(onClick = { adding = true }) { Text("+ Добавить сон") }
                     TextButton(onClick = { family = true }) { Text("Семья") }
-                    TextButton(onClick = { reminderSettings = true }) { Text("Напоминания") }
                 }
-                ReminderPanel(
-                    reminders,
-                    onSettings = { reminderSettings = true },
-                    onComplete = { vm.completeReminder(it) },
-                    onUndo = { vm.undoReminder(it) },
-                )
             }
             item { Text("История сна", style = MaterialTheme.typography.titleLarge) }
             items(history, key = { it.remoteId }) { e ->
-                OutlinedCard(
-                    Modifier.fillMaxWidth()
-                        .semantics { selected = selectedSleep == e.remoteId }
-                        .clickable { editing = e },
-                    colors =
-                        CardDefaults.outlinedCardColors(
-                            containerColor =
-                                if (selectedSleep == e.remoteId)
-                                    MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surface
-                        ),
-                ) {
+                OutlinedCard(Modifier.fillMaxWidth().clickable { editing = e }) {
                     Column(Modifier.padding(16.dp)) {
                         Text(
                             Instant.ofEpochMilli(e.startedAt).atZone(zone).format(dateFormat),
@@ -273,26 +247,6 @@ fun SleepScreen(
         )
     if (family)
         FamilyDialog(membership, vm, initialInvite.orEmpty(), onDismiss = { family = false })
-    if (reminderSettings)
-        ReminderSettingsDialog(
-            reminders.reminders,
-            { reminderSettings = false },
-            {
-                editingReminder = null
-                reminderEditor = true
-            },
-            {
-                editingReminder = it
-                reminderEditor = true
-            },
-            vm::setReminderEnabled,
-            vm::deleteReminder,
-        )
-    if (reminderEditor)
-        ReminderEditDialog(editingReminder, { reminderEditor = false }) {
-            vm.saveReminder(it)
-            reminderEditor = false
-        }
     if (adding || editing != null)
         SleepEntryDialog(
             editing,
@@ -525,17 +479,20 @@ internal fun SleepChart(
     current: CurrentSleepEstimate? = null,
     modifier: Modifier = Modifier,
     initialViewport: SleepChartViewport = SleepChartViewport(),
+    onEdit: (BabyEvent) -> Unit = {},
 ) {
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val colour = MaterialTheme.colorScheme.primary
     val viewport = initialViewport
+    var selection by remember(days, zone, today) { mutableStateOf<Pair<LocalDate, String>?>(null) }
+    val selectedEvent = events.firstOrNull { it.remoteId == selection?.second }
     var inspection by
         remember(days, zone, initialViewport) { mutableStateOf<Pair<LocalDate, Float>?>(null) }
     val textMeasurer = rememberTextMeasurer()
     val barTextStyle = MaterialTheme.typography.labelSmall
     Column(modifier.testTag("sleep-chart"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            "Наведите или удерживайте для времени · нажмите сон для истории",
+            "Наведите или удерживайте для времени · нажмите сон для подробностей",
             style = MaterialTheme.typography.labelSmall,
         )
         val inspected = inspection
@@ -660,6 +617,19 @@ internal fun SleepChart(
                         .forEach { e ->
                             val left = fraction(e.startedAt)
                             val right = fraction(e.endedAt ?: now)
+                            val isSelected = selectedEvent?.remoteId == e.remoteId
+                            val emphasis by
+                                animateFloatAsState(
+                                    if (isSelected) 1f else 0f,
+                                    tween(260),
+                                    label = "sleep-emphasis",
+                                )
+                            val opacity by
+                                animateFloatAsState(
+                                    if (selectedEvent == null || isSelected) 1f else 0.45f,
+                                    tween(260),
+                                    label = "sleep-opacity",
+                                )
                             Box(
                                 Modifier.offset(x = width * left)
                                     .width(
@@ -668,17 +638,32 @@ internal fun SleepChart(
                                     )
                                     .fillMaxHeight()
                                     .padding(vertical = 5.dp)
+                                    .graphicsLayer {
+                                        scaleY = 1f + 0.12f * emphasis
+                                        alpha = opacity
+                                    }
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(
                                         if (e.syncState == SyncState.CONFLICT)
                                             MaterialTheme.colorScheme.error
+                                        else if (isSelected) MaterialTheme.colorScheme.tertiary
                                         else colour
                                     )
+                                    .border(
+                                        (2.dp * emphasis),
+                                        if (isSelected) MaterialTheme.colorScheme.onTertiary
+                                        else androidx.compose.ui.graphics.Color.Transparent,
+                                        RoundedCornerShape(4.dp),
+                                    )
                                     .semantics {
+                                        selected = isSelected
                                         contentDescription =
                                             "${day.format(dateFormat)}: сон ${graphClock(e.startedAt, zone, axis.changesOffset)} — ${e.endedAt?.let { graphClock(it, zone, axis.changesOffset) } ?: "сейчас"}"
                                     }
-                                    .clickable { onSelect(e) },
+                                    .clickable {
+                                        selection = day to e.remoteId
+                                        onSelect(e)
+                                    },
                                 contentAlignment = Alignment.CenterStart,
                             ) {
                                 val label = graphClock(e.startedAt, zone, axis.changesOffset)
@@ -698,6 +683,8 @@ internal fun SleepChart(
                                         color =
                                             if (e.syncState == SyncState.CONFLICT)
                                                 MaterialTheme.colorScheme.onError
+                                            else if (isSelected)
+                                                MaterialTheme.colorScheme.onTertiary
                                             else MaterialTheme.colorScheme.onPrimary,
                                         style = barTextStyle,
                                         maxLines = 1,
@@ -796,6 +783,23 @@ internal fun SleepChart(
                     }
                 }
             }
+            AnimatedVisibility(
+                visible = selectedEvent != null && selection?.first == day,
+                enter = fadeIn(tween(180)) + expandVertically(tween(240)),
+                exit = fadeOut(tween(120)) + shrinkVertically(tween(200)),
+            ) {
+                selectedEvent
+                    ?.takeIf { selection?.first == day }
+                    ?.let { event ->
+                        SleepDetailCard(
+                            event,
+                            now,
+                            zone,
+                            onEdit = { onEdit(event) },
+                            onDismiss = { selection = null },
+                        )
+                    }
+            }
             current
                 ?.expectedWake
                 ?.takeIf { it >= start && it < end && visible(it, it + 1) }
@@ -834,6 +838,64 @@ internal fun SleepChart(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.tertiary,
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun SleepDetailCard(
+    event: BabyEvent,
+    now: Long,
+    zone: ZoneId,
+    onEdit: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val bringIntoView = remember { BringIntoViewRequester() }
+    LaunchedEffect(event.remoteId) {
+        // Wait for expansion so the scroll includes the full card and its actions.
+        delay(280)
+        bringIntoView.bringIntoView()
+    }
+    OutlinedCard(
+        Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoView).testTag("sleep-detail-card"),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary),
+        colors =
+            CardDefaults.outlinedCardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+            ),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Выбранный сон",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+                TextButton(onClick = onDismiss) { Text("Закрыть") }
+            }
+            Text(
+                "${Instant.ofEpochMilli(event.startedAt).atZone(zone).format(dateFormat)} · ${clock(event.startedAt, zone)} — " +
+                    (event.endedAt?.let { end ->
+                        val startDay =
+                            Instant.ofEpochMilli(event.startedAt).atZone(zone).toLocalDate()
+                        val endDay = Instant.ofEpochMilli(end).atZone(zone).toLocalDate()
+                        clock(end, zone) +
+                            if (endDay != startDay) " · ${endDay.format(dateFormat)}" else ""
+                    } ?: "сейчас"),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                (if (event.endedAt == null) "Спит · " else "Длительность · ") +
+                    duration((event.endedAt ?: now) - event.startedAt)
+            )
+            if (event.syncState == SyncState.CONFLICT)
+                Text("Проверьте время: конфликт записей", color = MaterialTheme.colorScheme.error)
+            OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
+                Text("Изменить сон")
+            }
         }
     }
 }

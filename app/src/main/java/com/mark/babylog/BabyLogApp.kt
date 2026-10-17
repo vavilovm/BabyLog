@@ -8,7 +8,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.mark.babylog.data.BabyDatabase
 import com.mark.babylog.data.BabyLogRepository
 import com.mark.babylog.reminders.ReminderRepository
-import com.mark.babylog.reminders.ReminderScheduler
+import com.mark.babylog.reminders.RetiredReminderNotifications
 import com.mark.babylog.sync.FamilySync
 import com.mark.babylog.sync.SyncWorker
 import kotlinx.coroutines.*
@@ -38,11 +38,10 @@ class BabyLogApp : Application() {
         super.onCreate()
         SyncWorker.periodic(this)
         appScope.launch {
+            RetiredReminderNotifications.cancelAll(this@BabyLogApp)
             repository.normalizeLegacyActiveFeeding()
             repository.attachToFamily()
-            reminderRepository.ensureDefaults()
             reminderRepository.attachToFamily()
-            ReminderScheduler.rescheduleAll(this@BabyLogApp)
             familySync.startRealtime()
             familySync.schedule()
         }

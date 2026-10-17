@@ -9,9 +9,7 @@ import com.mark.babylog.data.EventType
 import com.mark.babylog.data.FamilyMembership
 import com.mark.babylog.data.ReminderCompletion
 import com.mark.babylog.data.SyncState
-import com.mark.babylog.reminders.ONE_TIME_INTERVAL_DAYS
 import com.mark.babylog.reminders.ReminderRepository
-import com.mark.babylog.reminders.occursOn
 import com.mark.babylog.reminders.shouldApplyRemote
 import java.time.LocalDate
 import kotlinx.coroutines.flow.first
@@ -43,30 +41,6 @@ class ReminderAndPagingTest {
     @After
     fun close() {
         db.close()
-    }
-
-    @Test
-    fun intervalUsesAnchorDate() {
-        val anchor = LocalDate.of(2026, 7, 16)
-        val reminder =
-            BabyReminder(title = "Витамин", intervalDays = 2, anchorEpochDay = anchor.toEpochDay())
-        assertTrue(reminder.occursOn(anchor))
-        assertFalse(reminder.occursOn(anchor.plusDays(1)))
-        assertTrue(reminder.occursOn(anchor.plusDays(2)))
-    }
-
-    @Test
-    fun oneTimeReminderOnlyOccursOnSelectedDate() {
-        val selected = LocalDate.of(2026, 7, 20)
-        val reminder =
-            BabyReminder(
-                title = "Приём врача",
-                intervalDays = ONE_TIME_INTERVAL_DAYS,
-                anchorEpochDay = selected.toEpochDay(),
-            )
-        assertFalse(reminder.occursOn(selected.minusDays(1)))
-        assertTrue(reminder.occursOn(selected))
-        assertFalse(reminder.occursOn(selected.plusDays(1)))
     }
 
     @Test
@@ -118,7 +92,7 @@ class ReminderAndPagingTest {
             .putMembership(
                 FamilyMembership(householdId = "family", memberId = "mama", displayName = "Мама")
             )
-        ReminderRepository(BabyLogApp(), db, requestSync = {}, reschedule = {}, clearFired = {})
+        ReminderRepository(BabyLogApp(), db, requestSync = {}, onRemoteApplied = {})
             .attachToFamily()
         assertEquals(
             setOf("REMINDER_UPSERT", "REMINDER_COMPLETE"),
@@ -144,7 +118,7 @@ class ReminderAndPagingTest {
             )
         db.events().putReminder(local)
         val repository =
-            ReminderRepository(BabyLogApp(), db, requestSync = {}, reschedule = {}, clearFired = {})
+            ReminderRepository(BabyLogApp(), db, requestSync = {}, onRemoteApplied = {})
         fun reminder(title: String, updatedAt: Long) =
             mapOf<String, Any?>(
                 "id" to "shared",

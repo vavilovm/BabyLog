@@ -22,7 +22,7 @@ import com.mark.babylog.BabyLogApp
 import com.mark.babylog.MainActivity
 import com.mark.babylog.R
 import com.mark.babylog.data.*
-import com.mark.babylog.reminders.ReminderScheduler
+import com.mark.babylog.reminders.RetiredReminderNotifications
 import com.mark.babylog.widget.FeedingHorizontalWidget
 import com.mark.babylog.widget.FeedingHorizontalWidgetReceiver
 import com.mark.babylog.widget.FeedingMiniWidget
@@ -415,7 +415,7 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                ReminderScheduler.rescheduleAll(context)
+                RetiredReminderNotifications.cancelAll(context)
                 AppSurfaceSync.refresh(context)
             } finally {
                 pending.finish()

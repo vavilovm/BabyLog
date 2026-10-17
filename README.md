@@ -20,7 +20,7 @@ firebase deploy --only functions,firestore
 
 ## Быстрый просмотр
 
-Откройте проект в Android Studio, дождитесь Sync и запустите конфигурацию `app` на эмуляторе/телефоне. Экран `BabyScreen` также доступен из Compose Preview.
+Откройте проект в Android Studio, дождитесь Sync и запустите конфигурацию `app` на эмуляторе/телефоне. Текущий экран сна покрыт скриншотными тестами `SleepChartScreenshotTest` и `DashboardReviewScreenshotTest`.
 
 ## Сборка и тесты
 

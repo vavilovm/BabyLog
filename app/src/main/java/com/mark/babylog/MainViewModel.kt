@@ -11,10 +11,8 @@ import com.mark.babylog.sync.AppSurfaceSync
 import com.mark.babylog.sync.familyResult
 import java.io.File
 import java.text.SimpleDateFormat
-import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
-import java.time.ZonedDateTime
 import java.util.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -24,11 +22,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class UiState(val events: List<BabyEvent> = emptyList(), val totalEvents: Int = events.size) {}
-
-data class ReminderUiState(
-    val reminders: List<BabyReminder> = emptyList(),
-    val completions: List<ReminderCompletion> = emptyList(),
-)
 
 data class DailyStatisticsState(
     val day: LocalDate = LocalDate.now(),
@@ -100,26 +93,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     .onStart { emit(DailyStatisticsState(day, loading = true)) }
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DailyStatisticsState())
-    private val today =
-        flow {
-                while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-                    val now = ZonedDateTime.now()
-                    emit(now.toLocalDate().toEpochDay())
-                    val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
-                    delay(Duration.between(now, nextMidnight).toMillis().coerceAtLeast(1_000))
-                }
-            }
-            .distinctUntilChanged()
-    val reminderState =
-        today
-            .flatMapLatest { day ->
-                combine(
-                    babyApp.reminderRepository.reminders,
-                    babyApp.reminderRepository.completions(day),
-                    ::ReminderUiState,
-                )
-            }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ReminderUiState())
 
     init {
         viewModelScope.launch { sync() }
@@ -171,28 +144,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun selectStatisticsDay(day: LocalDate) {
         statisticsDay.value = day.coerceAtMost(LocalDate.now())
     }
-
-    fun saveReminder(reminder: BabyReminder) = launchAction {
-        babyApp.reminderRepository.save(reminder)
-    }
-
-    fun deleteReminder(reminder: BabyReminder) = launchAction {
-        babyApp.reminderRepository.delete(reminder)
-    }
-
-    fun setReminderEnabled(reminder: BabyReminder, enabled: Boolean) = launchAction {
-        babyApp.reminderRepository.setEnabled(reminder, enabled)
-    }
-
-    fun completeReminder(reminder: BabyReminder, day: Long = LocalDate.now().toEpochDay()) =
-        launchAction {
-            babyApp.reminderRepository.complete(reminder.id, day)
-        }
-
-    fun undoReminder(reminder: BabyReminder, day: Long = LocalDate.now().toEpochDay()) =
-        launchAction {
-            babyApp.reminderRepository.undo(reminder.id, day)
-        }
 
     fun createFamily(name: String, onDone: (Result<String>) -> Unit) =
         viewModelScope.launch { onDone(familyResult { babyApp.familySync.createFamily(name) }) }

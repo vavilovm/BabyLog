@@ -65,6 +65,57 @@ class SleepChartScreenshotTest {
     }
 
     @Test
+    fun selectedSleepDetail_overnight() =
+        paparazzi.snapshot {
+            BabyTheme {
+                Surface(Modifier.padding(16.dp)) {
+                    Column {
+                        SleepDetailCard(
+                            BabyEvent(
+                                type = EventType.SLEEP,
+                                detail = "BACK",
+                                startedAt = now - 16 * 3_600_000,
+                                endedAt = now - 7 * 3_600_000,
+                                sleepRecordVersion = 1,
+                            ),
+                            now,
+                            zone,
+                            {},
+                            {},
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun selectedSleepDetail_activeLargeText() =
+        paparazzi.snapshot {
+            CompositionLocalProvider(
+                LocalDensity provides Density(LocalDensity.current.density, 1.5f)
+            ) {
+                MaterialTheme(colorScheme = Dark) {
+                    Surface(Modifier.padding(16.dp)) {
+                        Column {
+                            SleepDetailCard(
+                                BabyEvent(
+                                    type = EventType.SLEEP,
+                                    detail = "BACK",
+                                    startedAt = now - 90 * 60_000,
+                                    sleepRecordVersion = 1,
+                                ),
+                                now,
+                                zone,
+                                {},
+                                {},
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+    @Test
     fun zoomedChart_labelsFollowGrid() =
         paparazzi.snapshot {
             BabyTheme {

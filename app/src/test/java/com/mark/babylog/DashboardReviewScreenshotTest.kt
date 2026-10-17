@@ -89,6 +89,7 @@ class DashboardReviewScreenshotTest {
                                     zone,
                                     {},
                                     {},
+                                    updateAction = { TextButton(onClick = {}) { Text("Обновить") } },
                                 )
                             }
                         ) { padding ->

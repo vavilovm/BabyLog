@@ -105,6 +105,23 @@ jobs:
           BABYLOG_STORE_PASSWORD: ${{ secrets.BABYLOG_STORE_PASSWORD }}
           BABYLOG_KEY_PASSWORD: ${{ secrets.BABYLOG_KEY_PASSWORD }}
         run: ./gradlew assembleRelease -PreleaseVersionName=${{ steps.version.outputs.name }} -PreleaseVersionCode=${{ steps.version.outputs.code }}
+      - name: Enable emulator acceleration
+        run: sudo chmod a+rw /dev/kvm
+      - name: Launch the signed release APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: bash scripts/smoke-test-apk.sh app/build/outputs/apk/release/app-release.apk
+      - name: Upload startup failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-startup-logs
+          path: build/reports/startup/
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}

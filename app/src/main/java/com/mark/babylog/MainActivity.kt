@@ -202,6 +202,7 @@ fun BabyScreen(
                     }
                 },
                 actions = {
+                    UpdateButton()
                     if (syncStatus?.error != null)
                         Text(
                             "!",

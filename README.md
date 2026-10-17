@@ -60,3 +60,11 @@ Workflow `.github/workflows/android.yml` проверяет тесты и соб
 Ручная публикация GitHub Release со стабильным тегом `vX.Y.Z` также поддерживается. Сборка использует версию этого тега. Ключ подписи и Firebase-конфигурация восстанавливаются из GitHub Secrets. Ключ подписи необходимо сохранять для совместимости обновлений. Debug APK предназначен только для разработки.
 
 Подробности прогнозов, ограничения и порядок обновления сервера: [SLEEP_PREDICTION.md](SLEEP_PREDICTION.md).
+
+### In-app GitHub updates
+
+Tap **Обновить / Update app** in the toolbar to download the APK from the latest
+stable GitHub release. The app checks the package name, signing certificate and
+increasing Android version code before opening Android's installer. Allow
+installation from BabyLog when prompted. The existing private release signing
+key is preserved, so installing the update retains app data.

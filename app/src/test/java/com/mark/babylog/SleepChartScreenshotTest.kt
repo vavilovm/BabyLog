@@ -147,6 +147,23 @@ class SleepChartScreenshotTest {
         }
 
     @Test
+    fun finishedSleepPrompt_dark() =
+        paparazzi.snapshot {
+            MaterialTheme(colorScheme = Dark) {
+                Surface {
+                    Column {
+                        FinishedSleepPrompt(
+                            events.first(),
+                            onEdit = {},
+                            onDismiss = {},
+                            zone = zone,
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test
     fun zoomedChart_labelsFollowGrid() =
         paparazzi.snapshot {
             BabyTheme {

@@ -33,18 +33,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -1537,6 +1547,10 @@ internal fun FinishedSleepPrompt(
         }
         onDismiss()
     }
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val countdownColor = if (dark) Color(0xFFFFC166) else Color(0xFF995000)
+    val promptColor = if (dark) Color(0xFF382B17) else Color(0xFFFFF0D6)
+    val textColor = if (dark) Color(0xFFFFE6BF) else Color(0xFF3F2A0D)
     Surface(
         Modifier.padding(horizontal = 16.dp)
             .fillMaxWidth()
@@ -1553,10 +1567,41 @@ internal fun FinishedSleepPrompt(
                 )
             },
         shape = RoundedCornerShape(16.dp),
-        tonalElevation = 6.dp,
+        color = promptColor,
+        contentColor = textColor,
         shadowElevation = 4.dp,
     ) {
-        Column {
+        Column(
+            Modifier.semantics { progressBarRangeInfo = ProgressBarRangeInfo(remaining, 0f..1f) }
+                .drawWithCache {
+                    val stroke = 3.dp.toPx()
+                    val inset = stroke / 2
+                    val outline =
+                        Path().apply {
+                            addRoundRect(
+                                RoundRect(
+                                    Rect(inset, inset, size.width - inset, size.height - inset),
+                                    CornerRadius(16.dp.toPx() - inset),
+                                )
+                            )
+                        }
+                    val measure = PathMeasure().apply { setPath(outline, true) }
+                    val segment = Path()
+                    val style = Stroke(stroke, cap = StrokeCap.Round)
+                    onDrawWithContent {
+                        drawContent()
+                        drawPath(outline, countdownColor.copy(alpha = 0.2f), style = style)
+                        segment.reset()
+                        measure.getSegment(
+                            measure.length * (1f - remaining),
+                            measure.length,
+                            segment,
+                            true,
+                        )
+                        drawPath(segment, countdownColor, style = style)
+                    }
+                }
+        ) {
             Text(
                 "Проснулась в ${clock(event.endedAt ?: event.startedAt, zone)}",
                 Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
@@ -1567,10 +1612,19 @@ internal fun FinishedSleepPrompt(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onEdit) { Text("Изменить время") }
-                TextButton(onClick = onDismiss) { Text("Скрыть") }
+                TextButton(
+                    onClick = onEdit,
+                    colors = ButtonDefaults.textButtonColors(contentColor = countdownColor),
+                ) {
+                    Text("Изменить время")
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.textButtonColors(contentColor = countdownColor),
+                ) {
+                    Text("Скрыть")
+                }
             }
-            LinearProgressIndicator(progress = { remaining }, modifier = Modifier.fillMaxWidth())
         }
     }
 }

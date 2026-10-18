@@ -3,10 +3,16 @@ package com.mark.babylog
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -131,7 +137,7 @@ class SleepChartGestureTest {
         var edited: BabyEvent? = null
         compose.setContent {
             BabyTheme {
-                Surface(Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                     SleepChart(
                         listOf(event, other),
                         emptyList(),
@@ -151,17 +157,141 @@ class SleepChartGestureTest {
         second.assertIsNotSelected()
         compose.onNodeWithTag("sleep-detail-card").assertIsDisplayed()
         compose.onNodeWithText("Длительность · 2 ч 0 мин").assertIsDisplayed()
-        compose.onNodeWithText("Изменить сон").performClick()
+        compose.onNodeWithText("Изменить сон").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(event, edited) }
-        second.performClick()
+        second.performScrollTo().performClick()
         first.assertIsNotSelected()
         second.assertIsSelected()
         compose.onNodeWithText("Длительность · 1 ч 0 мин").assertIsDisplayed()
-        compose.onNodeWithText("Изменить сон").performClick()
+        compose.onNodeWithText("Изменить сон").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(other, edited) }
         compose.onNodeWithText("Закрыть").performClick()
         compose.onNodeWithTag("sleep-detail-card").assertDoesNotExist()
         second.assertIsNotSelected()
+    }
+
+    @Test
+    fun tappingSameSleepAgainClosesDetails() {
+        compose.setContent {
+            BabyTheme {
+                SleepChart(listOf(event), emptyList(), start + 13 * 3_600_000, zone, 3, {})
+            }
+        }
+        val bar = compose.onNodeWithContentDescription("15.10.2026: сон 09:00 — 11:00")
+        bar.performClick()
+        compose.onNodeWithTag("sleep-detail-card").assertExists()
+        bar.performClick()
+        compose.onNodeWithTag("sleep-detail-card").assertDoesNotExist()
+        bar.assertIsNotSelected()
+    }
+
+    @Test
+    fun outsidePressClosesDetailsAndStillActivatesOutsideControl() {
+        var outsideClicked = false
+        compose.setContent {
+            var bounds by remember { mutableStateOf<Rect?>(null) }
+            var dismiss by remember { mutableIntStateOf(0) }
+            BabyTheme {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .dismissSleepChartOnOutsidePress(bounds) { dismiss++ }
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    SleepChart(
+                        listOf(event),
+                        emptyList(),
+                        start + 13 * 3_600_000,
+                        zone,
+                        3,
+                        {},
+                        modifier = Modifier.onGloballyPositioned { bounds = it.boundsInRoot() },
+                        dismissSignal = dismiss,
+                    )
+                    androidx.compose.material3.Button(
+                        onClick = { outsideClicked = true },
+                        modifier = Modifier.testTag("outside"),
+                    ) {
+                        androidx.compose.material3.Text("Outside")
+                    }
+                }
+            }
+        }
+        val bar = compose.onNodeWithContentDescription("15.10.2026: сон 09:00 — 11:00")
+        bar.performTouchInput { click() }
+        compose.onNodeWithTag("sleep-detail-card").assertExists()
+        compose.onNodeWithTag("outside").performScrollTo().performTouchInput { click() }
+        compose.onNodeWithTag("sleep-detail-card").assertDoesNotExist()
+        bar.assertIsNotSelected()
+        compose.runOnIdle { assertTrue(outsideClicked) }
+    }
+
+    @Test
+    fun activeSleepShowsWakeExpectationsAndAwakeTime() {
+        val active =
+            event.copy(remoteId = "active", startedAt = start + 12 * 3_600_000, endedAt = null)
+        val current =
+            com.mark.babylog.sleep.CurrentSleepEstimate(
+                active.startedAt,
+                start + 13 * 3_600_000,
+                start + 14 * 3_600_000,
+                start + 15 * 3_600_000,
+                8,
+                false,
+            )
+        compose.setContent {
+            BabyTheme {
+                SleepChart(
+                    listOf(event, active),
+                    emptyList(),
+                    start + 13 * 3_600_000,
+                    zone,
+                    3,
+                    {},
+                    current = current,
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("15.10.2026: сон 12:00 — сейчас").performClick()
+        compose.onNodeWithText("Бодрствование перед сном · 1 ч 0 мин").assertExists()
+        compose.onNodeWithText("Ожидаемая длительность · 2 ч 0 мин").assertExists()
+        compose.onNodeWithText("Пробуждение около 14:00").assertExists()
+    }
+
+    @Test
+    fun finishedSleepPromptEditsAndCanBeSwipedAway() {
+        var edited = false
+        var dismissed = false
+        compose.setContent {
+            BabyTheme {
+                FinishedSleepPrompt(
+                    event,
+                    onEdit = { edited = true },
+                    onDismiss = { dismissed = true },
+                )
+            }
+        }
+        compose.onNodeWithText("Изменить время").performClick()
+        compose.runOnIdle { assertTrue(edited) }
+        compose.onNodeWithTag("finished-sleep-prompt").performTouchInput { swipeLeft() }
+        compose.runOnIdle { assertTrue(dismissed) }
+    }
+
+    @Test
+    fun projectedSleepShowsDetailsAndTogglesClosed() {
+        val projected =
+            com.mark.babylog.sleep.ForecastSleep(start + 14 * 3_600_000, start + 15 * 3_600_000, 20)
+        compose.setContent {
+            BabyTheme {
+                SleepChart(listOf(event), listOf(projected), start + 13 * 3_600_000, zone, 3, {})
+            }
+        }
+        val bar = compose.onNodeWithContentDescription("Прогноз сна 14:00 — 15:00")
+        bar.performClick()
+        bar.assertIsSelected()
+        compose.onNodeWithText("Бодрствование перед сном · 3 ч 0 мин").assertExists()
+        compose.onNodeWithTag("forecast-detail-card").assertExists()
+        bar.performClick()
+        compose.onNodeWithTag("forecast-detail-card").assertDoesNotExist()
     }
 
     @Test
@@ -182,7 +312,7 @@ class SleepChartGestureTest {
         segments[0].assertIsSelected()
         segments[1].assertIsSelected()
         compose.onAllNodesWithTag("sleep-detail-card").assertCountEquals(1)
-        compose.onNodeWithText("14.10.2026 · 22:00 — 06:00 · 15.10.2026").assertIsDisplayed()
+        compose.onNodeWithText("22:00 — 06:00").assertIsDisplayed()
         compose.runOnIdle { events.value = emptyList() }
         compose.onNodeWithTag("sleep-detail-card").assertDoesNotExist()
     }

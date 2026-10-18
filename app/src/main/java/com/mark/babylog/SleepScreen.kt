@@ -32,9 +32,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -116,7 +123,20 @@ fun SleepScreen(
     var family by remember { mutableStateOf(initialInvite != null) }
     var editing by remember { mutableStateOf<BabyEvent?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var editEndFirst by remember { mutableStateOf(false) }
     val history = remember(events) { events.sortedByDescending { it.startedAt } }
+    var chartBounds by remember { mutableStateOf<Rect?>(null) }
+    var dismissChart by remember { mutableIntStateOf(0) }
+    var recentlyFinished by remember { mutableStateOf<BabyEvent?>(null) }
+    var finishingId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(events, finishingId) {
+        events
+            .firstOrNull { it.remoteId == finishingId && it.endedAt != null }
+            ?.let {
+                recentlyFinished = it
+                finishingId = null
+            }
+    }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.errors.collect { snack.showSnackbar(it) } }
     LaunchedEffect(initialInvite) {
@@ -126,7 +146,24 @@ fun SleepScreen(
         }
     }
     Scaffold(
-        snackbarHost = { SnackbarHost(snack) },
+        modifier = Modifier.dismissSleepChartOnOutsidePress(chartBounds) { dismissChart++ },
+        snackbarHost = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                recentlyFinished?.let { finished ->
+                    FinishedSleepPrompt(
+                        finished,
+                        zone = zone,
+                        onEdit = {
+                            editEndFirst = true
+                            editing = finished
+                            recentlyFinished = null
+                        },
+                        onDismiss = { recentlyFinished = null },
+                    )
+                }
+                SnackbarHost(snack)
+            }
+        },
         topBar = {
             SleepAppBar(
                 profile,
@@ -153,7 +190,10 @@ fun SleepScreen(
                     now,
                     zone,
                     vm::beginSleep,
-                    vm::finishSleep,
+                    {
+                        finishingId = active?.remoteId
+                        vm.finishSleep()
+                    },
                     { editing = it },
                     liveDuration = true,
                 )
@@ -196,6 +236,8 @@ fun SleepScreen(
                     onSelect = {},
                     onEdit = { editing = it },
                     current = prediction.current,
+                    modifier = Modifier.onGloballyPositioned { chartBounds = it.boundsInRoot() },
+                    dismissSignal = dismissChart,
                 )
             }
             item { SleepTotals(sessions, displayNow, zone) }
@@ -254,7 +296,9 @@ fun SleepScreen(
             {
                 adding = false
                 editing = null
+                editEndFirst = false
             },
+            endFirst = editEndFirst,
             onSave = { start, end ->
                 val current = editing
                 if (current == null) vm.recordSleep(start, end!!)
@@ -264,10 +308,12 @@ fun SleepScreen(
                     )
                 adding = false
                 editing = null
+                editEndFirst = false
             },
             onDelete = {
                 editing?.let(vm::delete)
                 editing = null
+                editEndFirst = false
             },
         )
 }
@@ -358,6 +404,7 @@ internal fun SleepEntryDialog(
     onDismiss: () -> Unit,
     onSave: (Long, Long?) -> Unit,
     onDelete: () -> Unit,
+    endFirst: Boolean = false,
 ) {
     val now = System.currentTimeMillis()
     var start by remember { mutableLongStateOf(event?.startedAt ?: now - 3_600_000) }
@@ -374,7 +421,7 @@ internal fun SleepEntryDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text("Укажите фактическое время засыпания и пробуждения.")
-                SleepEntryTimeField("Начало", start, zone) { start = it }
+                if (!endFirst) SleepEntryTimeField("Начало", start, zone) { start = it }
                 if (end != null) {
                     SleepEntryTimeField("Конец", end!!, zone) { end = it }
                 } else {
@@ -382,6 +429,7 @@ internal fun SleepEntryDialog(
                         Text("Ещё спит · указать пробуждение")
                     }
                 }
+                if (endFirst) SleepEntryTimeField("Начало", start, zone) { start = it }
                 if (!valid)
                     Text(
                         "Пробуждение должно быть после начала сна, не в будущем.",
@@ -480,12 +528,16 @@ internal fun SleepChart(
     modifier: Modifier = Modifier,
     initialViewport: SleepChartViewport = SleepChartViewport(),
     onEdit: (BabyEvent) -> Unit = {},
+    dismissSignal: Int = 0,
 ) {
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val colour = MaterialTheme.colorScheme.primary
     val viewport = initialViewport
     var selection by remember(days, zone, today) { mutableStateOf<Pair<LocalDate, String>?>(null) }
+    LaunchedEffect(dismissSignal) { selection = null }
     val selectedEvent = events.firstOrNull { it.remoteId == selection?.second }
+    val selectedForecast = forecast.firstOrNull { "forecast:${it.start}" == selection?.second }
+    val highlight = MaterialTheme.colorScheme.tertiary
     var inspection by
         remember(days, zone, initialViewport) { mutableStateOf<Pair<LocalDate, Float>?>(null) }
     val textMeasurer = rememberTextMeasurer()
@@ -626,7 +678,7 @@ internal fun SleepChart(
                                 )
                             val opacity by
                                 animateFloatAsState(
-                                    if (selectedEvent == null || isSelected) 1f else 0.45f,
+                                    if (selection == null || isSelected) 1f else 0.45f,
                                     tween(260),
                                     label = "sleep-opacity",
                                 )
@@ -642,6 +694,19 @@ internal fun SleepChart(
                                         scaleY = 1f + 0.12f * emphasis
                                         alpha = opacity
                                     }
+                                    .drawBehind {
+                                        val extra = 2.dp.toPx() * emphasis
+                                        drawRoundRect(
+                                            highlight.copy(alpha = 0.35f),
+                                            topLeft = Offset(-extra, -extra),
+                                            size =
+                                                Size(
+                                                    size.width + extra * 2,
+                                                    size.height + extra * 2,
+                                                ),
+                                            cornerRadius = CornerRadius(6.dp.toPx()),
+                                        )
+                                    }
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(
                                         if (e.syncState == SyncState.CONFLICT)
@@ -649,20 +714,16 @@ internal fun SleepChart(
                                         else if (isSelected) MaterialTheme.colorScheme.tertiary
                                         else colour
                                     )
-                                    .border(
-                                        (2.dp * emphasis),
-                                        if (isSelected) MaterialTheme.colorScheme.onTertiary
-                                        else androidx.compose.ui.graphics.Color.Transparent,
-                                        RoundedCornerShape(4.dp),
-                                    )
                                     .semantics {
                                         selected = isSelected
                                         contentDescription =
                                             "${day.format(dateFormat)}: сон ${graphClock(e.startedAt, zone, axis.changesOffset)} — ${e.endedAt?.let { graphClock(it, zone, axis.changesOffset) } ?: "сейчас"}"
                                     }
                                     .clickable {
-                                        selection = day to e.remoteId
-                                        onSelect(e)
+                                        selection =
+                                            if (selectedEvent?.remoteId == e.remoteId) null
+                                            else day to e.remoteId
+                                        if (selection != null) onSelect(e)
                                     },
                                 contentAlignment = Alignment.CenterStart,
                             ) {
@@ -695,22 +756,30 @@ internal fun SleepChart(
                     forecast
                         .filter { it.start < end && it.end > start && visible(it.start, it.end) }
                         .forEach { f ->
+                            val isSelected = selectedForecast == f
                             val left = fraction(f.start)
                             val right = fraction(f.end)
                             Box(
                                 Modifier.offset(x = width * left)
                                     .width(width * (right - left).coerceAtLeast(0.005f))
                                     .fillMaxHeight()
-                                    .padding(vertical = 10.dp)
+                                    .padding(vertical = if (isSelected) 7.dp else 10.dp)
                                     .border(
                                         1.dp,
                                         colour.copy(alpha = 0.75f),
                                         RoundedCornerShape(3.dp),
                                     )
-                                    .background(colour.copy(alpha = 0.08f))
+                                    .background(
+                                        colour.copy(alpha = if (isSelected) 0.22f else 0.08f)
+                                    )
                                     .semantics {
                                         contentDescription =
                                             "Прогноз сна ${graphClock(f.start, zone, axis.changesOffset)} — ${graphClock(f.end, zone, axis.changesOffset)}"
+                                        selected = isSelected
+                                    }
+                                    .clickable {
+                                        selection =
+                                            if (isSelected) null else day to "forecast:${f.start}"
                                     }
                             )
                         }
@@ -726,6 +795,18 @@ internal fun SleepChart(
                                     .semantics {
                                         contentDescription =
                                             "Прогноз пробуждения около ${clock(time, zone)}"
+                                    }
+                                    .clickable {
+                                        events
+                                            .firstOrNull {
+                                                it.endedAt == null &&
+                                                    it.startedAt == current.startedAt
+                                            }
+                                            ?.let {
+                                                selection =
+                                                    if (selectedEvent?.remoteId == it.remoteId) null
+                                                    else day to it.remoteId
+                                            }
                                     }
                             )
                         }
@@ -784,7 +865,8 @@ internal fun SleepChart(
                 }
             }
             AnimatedVisibility(
-                visible = selectedEvent != null && selection?.first == day,
+                visible =
+                    (selectedEvent != null || selectedForecast != null) && selection?.first == day,
                 enter = fadeIn(tween(180)) + expandVertically(tween(240)),
                 exit = fadeOut(tween(120)) + shrinkVertically(tween(200)),
             ) {
@@ -796,6 +878,30 @@ internal fun SleepChart(
                             now,
                             zone,
                             onEdit = { onEdit(event) },
+                            onDismiss = { selection = null },
+                            awakeBefore = awakeBeforeSleep(events, event.startedAt),
+                            current =
+                                current?.takeIf {
+                                    event.endedAt == null && it.startedAt == event.startedAt
+                                },
+                        )
+                    }
+                selectedForecast
+                    ?.takeIf { selection?.first == day }
+                    ?.let { projected ->
+                        ForecastDetailCard(
+                            projected,
+                            zone,
+                            awakeBefore =
+                                (forecast
+                                        .filter { it.end <= projected.start }
+                                        .maxOfOrNull { it.end }
+                                        ?: current?.expectedWake?.takeIf { it <= projected.start }
+                                        ?: events
+                                            .mapNotNull { it.endedAt }
+                                            .filter { it <= projected.start }
+                                            .maxOrNull())
+                                    ?.let { projected.start - it },
                             onDismiss = { selection = null },
                         )
                     }
@@ -850,6 +956,8 @@ internal fun SleepDetailCard(
     zone: ZoneId,
     onEdit: () -> Unit,
     onDismiss: () -> Unit,
+    awakeBefore: Long? = null,
+    current: CurrentSleepEstimate? = null,
 ) {
     val bringIntoView = remember { BringIntoViewRequester() }
     LaunchedEffect(event.remoteId) {
@@ -876,14 +984,7 @@ internal fun SleepDetailCard(
                 TextButton(onClick = onDismiss) { Text("Закрыть") }
             }
             Text(
-                "${Instant.ofEpochMilli(event.startedAt).atZone(zone).format(dateFormat)} · ${clock(event.startedAt, zone)} — " +
-                    (event.endedAt?.let { end ->
-                        val startDay =
-                            Instant.ofEpochMilli(event.startedAt).atZone(zone).toLocalDate()
-                        val endDay = Instant.ofEpochMilli(end).atZone(zone).toLocalDate()
-                        clock(end, zone) +
-                            if (endDay != startDay) " · ${endDay.format(dateFormat)}" else ""
-                    } ?: "сейчас"),
+                "${clock(event.startedAt, zone)} — ${event.endedAt?.let { clock(it, zone) } ?: "сейчас"}",
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -891,6 +992,28 @@ internal fun SleepDetailCard(
                 (if (event.endedAt == null) "Спит · " else "Длительность · ") +
                     duration((event.endedAt ?: now) - event.startedAt)
             )
+            awakeBefore?.let { Text("Бодрствование перед сном · ${duration(it)}") }
+            if (event.endedAt == null) {
+                if (current == null) Text("Для прогноза пробуждения пока мало данных")
+                else {
+                    Text(
+                        "Ожидаемая длительность · ${duration(current.expectedWake - event.startedAt)}"
+                    )
+                    Text("Пробуждение около ${clock(current.expectedWake, zone)}")
+                    PredictionRange(
+                        current.earliestWake,
+                        current.expectedWake,
+                        current.latestWake,
+                        now,
+                        zone,
+                    )
+                    Text(
+                        predictionExplanation(null, current, true),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (now > current.latestWake) Text("Окно прогноза прошло · сон продолжается")
+                }
+            }
             if (event.syncState == SyncState.CONFLICT)
                 Text("Проверьте время: конфликт записей", color = MaterialTheme.colorScheme.error)
             OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
@@ -1334,3 +1457,132 @@ private fun SleepEntryTimeField(label: String, time: Long, zone: ZoneId, onChang
         MinuteShortcuts { onChange(moveMinutes(time, it).coerceAtLeast(0)) }
     }
 }
+
+internal fun awakeBeforeSleep(events: List<BabyEvent>, start: Long): Long? =
+    events
+        .filter { it.sleepRecordVersion == 1 && it.startedAt < start }
+        .mapNotNull { it.endedAt }
+        .filter { it <= start }
+        .maxOrNull()
+        ?.let { start - it }
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ForecastDetailCard(
+    forecast: ForecastSleep,
+    zone: ZoneId,
+    awakeBefore: Long?,
+    onDismiss: () -> Unit,
+) {
+    val bringIntoView = remember { BringIntoViewRequester() }
+    LaunchedEffect(forecast.start) {
+        delay(280)
+        bringIntoView.bringIntoView()
+    }
+    OutlinedCard(
+        Modifier.fillMaxWidth()
+            .bringIntoViewRequester(bringIntoView)
+            .testTag("forecast-detail-card")
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Прогноз сна",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                TextButton(onClick = onDismiss) { Text("Закрыть") }
+            }
+            Text(
+                "${clock(forecast.start, zone)} — ${clock(forecast.end, zone)}",
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text("Ожидаемая длительность · ${duration(forecast.end - forecast.start)}")
+            awakeBefore?.let { Text("Бодрствование перед сном · ${duration(it)}") }
+            val uncertainty = forecast.uncertaintyMinutes * 60_000L
+            Text(
+                "Окно начала · ${clock(forecast.start - uncertainty, zone)} — ${clock(forecast.start + uncertainty, zone)}"
+            )
+            Text(
+                "Ориентировочный прогноз. Время и длительность могут измениться.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun FinishedSleepPrompt(
+    event: BabyEvent,
+    onEdit: () -> Unit,
+    onDismiss: () -> Unit,
+    zone: ZoneId = ZoneId.systemDefault(),
+) {
+    var remaining by remember(event.remoteId) { mutableFloatStateOf(1f) }
+    val accessibility = androidx.compose.ui.platform.LocalAccessibilityManager.current
+    val timeout =
+        accessibility?.calculateRecommendedTimeoutMillis(
+            15_000L,
+            containsIcons = true,
+            containsText = true,
+            containsControls = true,
+        ) ?: 15_000L
+    LaunchedEffect(event.remoteId, timeout) {
+        val started = android.os.SystemClock.uptimeMillis()
+        while (remaining > 0f) {
+            delay(50)
+            remaining =
+                (1f - (android.os.SystemClock.uptimeMillis() - started).toFloat() / timeout)
+                    .coerceAtLeast(0f)
+        }
+        onDismiss()
+    }
+    Surface(
+        Modifier.padding(horizontal = 16.dp)
+            .fillMaxWidth()
+            .testTag("finished-sleep-prompt")
+            .pointerInput(event.remoteId) {
+                var distance = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { distance = 0f },
+                    onHorizontalDrag = { change, amount ->
+                        distance += amount
+                        change.consume()
+                    },
+                    onDragEnd = { if (kotlin.math.abs(distance) > 48.dp.toPx()) onDismiss() },
+                )
+            },
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 6.dp,
+        shadowElevation = 4.dp,
+    ) {
+        Column {
+            Text(
+                "Проснулась в ${clock(event.endedAt ?: event.startedAt, zone)}",
+                Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onEdit) { Text("Изменить время") }
+                TextButton(onClick = onDismiss) { Text("Скрыть") }
+            }
+            LinearProgressIndicator(progress = { remaining }, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+internal fun Modifier.dismissSleepChartOnOutsidePress(
+    bounds: Rect?,
+    onDismiss: () -> Unit,
+): Modifier =
+    pointerInput(bounds) {
+        // Observe before child controls handle the press, without consuming their gestures.
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            if (bounds?.contains(down.position) != true) onDismiss()
+        }
+    }

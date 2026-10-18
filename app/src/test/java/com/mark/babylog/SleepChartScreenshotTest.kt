@@ -108,6 +108,37 @@ class SleepChartScreenshotTest {
                                 zone,
                                 {},
                                 {},
+                                awakeBefore = 2 * 3_600_000,
+                                current =
+                                    CurrentSleepEstimate(
+                                        now - 90 * 60_000,
+                                        now,
+                                        now + 30 * 60_000,
+                                        now + 60 * 60_000,
+                                        8,
+                                        false,
+                                    ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun finishedSleepPrompt_largeText() =
+        paparazzi.snapshot {
+            CompositionLocalProvider(
+                LocalDensity provides Density(LocalDensity.current.density, 1.5f)
+            ) {
+                BabyTheme {
+                    Surface {
+                        Column {
+                            FinishedSleepPrompt(
+                                events.first(),
+                                onEdit = {},
+                                onDismiss = {},
+                                zone = zone,
                             )
                         }
                     }

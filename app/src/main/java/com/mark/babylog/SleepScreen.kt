@@ -1538,12 +1538,12 @@ internal fun FinishedSleepPrompt(
             containsControls = true,
         ) ?: 15_000L
     LaunchedEffect(event.remoteId, timeout) {
-        val started = android.os.SystemClock.uptimeMillis()
+        val started = withFrameNanos { it }
         while (remaining > 0f) {
-            delay(50)
-            remaining =
-                (1f - (android.os.SystemClock.uptimeMillis() - started).toFloat() / timeout)
-                    .coerceAtLeast(0f)
+            withFrameNanos { frame ->
+                remaining =
+                    (1.0 - (frame - started) / 1_000_000.0 / timeout).toFloat().coerceIn(0f, 1f)
+            }
         }
         onDismiss()
     }

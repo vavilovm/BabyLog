@@ -143,17 +143,20 @@ class DashboardRefreshTest {
         }
         compose.onNodeWithTag("app-bar").assertHeightIsEqualTo(64.dp)
         val height = compose.onNodeWithTag("app-bar").fetchSemanticsNode().boundsInRoot.height
-        compose.onNodeWithContentDescription(SyncDisplayState.PENDING.title).performClick()
-        compose.onNodeWithText("Повторить").performClick()
+        compose.onNodeWithText("Профиль малыша").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Настройки").performClick()
+        compose.onNodeWithText(SyncDisplayState.PENDING.title).assertIsDisplayed()
+        compose.onNodeWithText("Синхронизировать сейчас").performClick()
         compose.runOnIdle { assertEquals(1, retries) }
-        compose.onNodeWithText("Понятно").performClick()
+        compose.onNodeWithText("Готово").performClick()
         compose.runOnIdle { pending.intValue = 0 }
-        compose.onNodeWithContentDescription(SyncDisplayState.SYNCED.title).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Настройки").performClick()
+        compose.onNodeWithText(SyncDisplayState.SYNCED.title).assertIsDisplayed()
         assertEquals(
             height,
             compose.onNodeWithTag("app-bar").fetchSemanticsNode().boundsInRoot.height,
         )
-        compose.onNodeWithText("Профиль").assertIsDisplayed()
+        compose.onNodeWithText("Профиль малыша").assertIsDisplayed()
     }
 
     @Test
@@ -180,11 +183,17 @@ class DashboardRefreshTest {
             }
         }
         compose
-            .onNodeWithContentDescription(SyncDisplayState.LOCAL.title)
+            .onNodeWithContentDescription("Настройки")
             .assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
-        compose.onNodeWithText("Профиль").assertIsDisplayed()
+        compose
+            .onNodeWithContentDescription("Звуки для сна")
+            .assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("Начать сон").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithContentDescription("Настройки").performClick()
+        compose.onNodeWithText("Профиль малыша").assertIsDisplayed()
+        compose.onNodeWithText(SyncDisplayState.LOCAL.title).assertIsDisplayed()
     }
 
     @Test

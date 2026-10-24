@@ -18,7 +18,9 @@ class StartupTest {
     @Test
     fun realActivityOpensSleepScreen() {
         compose.onNodeWithText("Сон малыша").assertExists()
-        compose.onNodeWithText("Update app").assertExists()
+        compose.onNodeWithText("Update app").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Настройки").assertExists()
+        compose.onNodeWithContentDescription("Звуки для сна").assertExists()
         val app = compose.activity.application as BabyLogApp
         kotlinx.coroutines.runBlocking {
             app.database
@@ -42,6 +44,9 @@ class StartupTest {
                     )
                 )
         }
+        compose.onNodeWithContentDescription("Настройки").performClick()
+        compose.onNodeWithText("Update app").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Готово").performClick()
         compose.onNode(hasScrollToIndexAction()).performScrollToIndex(3)
         compose.waitUntil(5_000) {
             compose

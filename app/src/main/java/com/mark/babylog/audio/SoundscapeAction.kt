@@ -1,12 +1,13 @@
 package com.mark.babylog.audio
 
 import android.content.ComponentName
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -18,14 +19,10 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
-fun SoundscapeCard() {
+fun SoundscapeAction() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var open by rememberSaveable { mutableStateOf(false) }
     var connect by rememberSaveable { mutableStateOf(false) }
     var controller by remember { mutableStateOf<MediaController?>(null) }
@@ -33,36 +30,6 @@ fun SoundscapeCard() {
     var playing by remember { mutableStateOf(false) }
     var volume by remember { mutableFloatStateOf(.25f) }
     var error by remember { mutableStateOf<String?>(null) }
-    var exportId by rememberSaveable { mutableStateOf<String?>(null) }
-    var saving by remember { mutableStateOf(false) }
-    val export =
-        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri
-            ->
-            val sound = soundscapes.firstOrNull { it.id == exportId }
-            exportId = null
-            if (uri != null && sound != null) {
-                saving = true
-                scope.launch {
-                    val result =
-                        withContext(Dispatchers.IO) {
-                            runCatching {
-                                context.assets.open(sound.assetPath).use { input ->
-                                    checkNotNull(context.contentResolver.openOutputStream(uri))
-                                        .use { input.copyTo(it) }
-                                }
-                            }
-                        }
-                    saving = false
-                    Toast.makeText(
-                            context,
-                            if (result.isSuccess) "Звук сохранён на телефон"
-                            else "Не удалось сохранить файл. Попробуйте снова.",
-                            Toast.LENGTH_LONG,
-                        )
-                        .show()
-                }
-            }
-        }
     DisposableEffect(context, connect) {
         if (!connect) return@DisposableEffect onDispose {}
         val future =
@@ -112,27 +79,20 @@ fun SoundscapeCard() {
             controller = null
         }
     }
-    OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Звуки для сна", style = MaterialTheme.typography.titleMedium)
-            Text(
-                if (playing)
-                    "Сейчас: ${soundscapes.firstOrNull { it.id == currentId }?.title.orEmpty()}"
-                else "Дождь, костёр, океан и мягкий шум · офлайн",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Row {
-                TextButton(
-                    onClick = {
-                        connect = true
-                        open = true
-                    }
-                ) {
-                    Text("Выбрать звук")
-                }
-                if (playing) TextButton(onClick = { controller?.pause() }) { Text("Пауза") }
-            }
-        }
+    IconButton(
+        modifier = Modifier.size(48.dp),
+        onClick = {
+            connect = true
+            open = true
+        },
+    ) {
+        Icon(
+            Icons.Outlined.MusicNote,
+            contentDescription = if (playing) "Звуки для сна · играет" else "Звуки для сна",
+            tint =
+                if (playing) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
     if (open)
         AlertDialog(
@@ -144,48 +104,52 @@ fun SoundscapeCard() {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        "Все звуки уже на телефоне. Играют по кругу без пауз, в том числе с выключенным экраном, пока вы не нажмёте паузу."
-                    )
-                    Text(
-                        "Оригинальные звуковые пейзажи. Сохраните файл, чтобы слушать в другом плеере.",
+                        "Работают без интернета, в том числе с выключенным экраном.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     soundscapes.forEach { sound ->
-                        Text(sound.title, style = MaterialTheme.typography.titleSmall)
-                        Text(sound.description, style = MaterialTheme.typography.bodySmall)
-                        Row {
-                            TextButton(
-                                enabled = controller != null,
-                                onClick = {
-                                    controller?.let { player ->
-                                        error = null
-                                        if (currentId == sound.id && playing) player.pause()
-                                        else {
-                                            if (
-                                                currentId != sound.id ||
-                                                    player.playbackState == Player.STATE_IDLE
-                                            ) {
-                                                player.setMediaItem(sound.mediaItem())
-                                                player.prepare()
+                        val selected = currentId == sound.id && playing
+                        ListItem(
+                            headlineContent = { Text(sound.title) },
+                            supportingContent = { Text(sound.description) },
+                            trailingContent = {
+                                IconButton(
+                                    enabled = controller != null,
+                                    onClick = {
+                                        controller?.let { player ->
+                                            error = null
+                                            if (selected) player.pause()
+                                            else {
+                                                if (
+                                                    currentId != sound.id ||
+                                                        player.playbackState == Player.STATE_IDLE
+                                                ) {
+                                                    player.setMediaItem(sound.mediaItem())
+                                                    player.prepare()
+                                                }
+                                                player.play()
                                             }
-                                            player.play()
                                         }
-                                    }
-                                },
-                            ) {
-                                Text(if (currentId == sound.id && playing) "Пауза" else "Слушать")
-                            }
-                            TextButton(
-                                enabled = !saving && exportId == null,
-                                onClick = {
-                                    exportId = sound.id
-                                    export.launch("BabyLog-${sound.id}.wav")
-                                },
-                            ) {
-                                Text("Сохранить · 3,8 МБ")
-                            }
-                        }
-                        HorizontalDivider()
+                                    },
+                                ) {
+                                    Icon(
+                                        if (selected) Icons.Outlined.Pause
+                                        else Icons.Outlined.PlayArrow,
+                                        if (selected) "Пауза · ${sound.title}"
+                                        else "Слушать · ${sound.title}",
+                                        tint =
+                                            if (selected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            colors =
+                                ListItemDefaults.colors(
+                                    containerColor =
+                                        if (selected) MaterialTheme.colorScheme.secondaryContainer
+                                        else MaterialTheme.colorScheme.surface
+                                ),
+                        )
                     }
                     Text("Громкость · ${(volume * 100).toInt()}%")
                     Slider(

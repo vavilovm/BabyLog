@@ -27,6 +27,9 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -189,7 +192,7 @@ fun SleepScreen(
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 SleepStatusCard(
@@ -206,7 +209,6 @@ fun SleepScreen(
                     liveDuration = true,
                 )
             }
-            item { com.mark.babylog.audio.SoundscapeCard() }
             item {
                 NextSleepCard(prediction.next, active != null, displayNow, zone, prediction.current)
             }
@@ -225,15 +227,6 @@ fun SleepScreen(
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(7, 14, 30).forEach { count ->
-                        FilterChip(
-                            selected = days == count,
-                            onClick = { days = count },
-                            label = { Text("$count дней") },
-                        )
-                    }
-                }
             }
             item {
                 SleepChart(
@@ -249,6 +242,7 @@ fun SleepScreen(
                     dismissSignal = dismissChart,
                 )
             }
+            item { SleepChartPeriod(days, onChange = { days = it }) }
             item { SleepTotals(sessions, displayNow, zone) }
             item {
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -491,34 +485,60 @@ internal fun SleepAppBar(
     onProfile: () -> Unit,
     updateAction: @Composable () -> Unit = {},
 ) {
+    var settingsOpen by remember { mutableStateOf(false) }
     TopAppBar(
         title = {
-            Column {
-                Text(
-                    "Сон малыша",
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
-                profile?.let { p ->
-                    val age = SleepPredictor.correctedAgeDays(p, today)
-                    Text(
-                        "${age / 7} нед. ${age % 7} дн.${if (p.dueDate != null) " · скорректированный возраст" else ""}",
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            Text(
+                "Сон малыша",
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
         },
         actions = {
-            updateAction()
-            SyncStatusAction(family, pendingCount, syncStatus, zone, onRetry)
-            TextButton(onClick = onProfile, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Профиль")
+            com.mark.babylog.audio.SoundscapeAction()
+            IconButton(onClick = { settingsOpen = true }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Outlined.Settings, contentDescription = "Настройки")
             }
         },
     )
+    if (settingsOpen)
+        AlertDialog(
+            onDismissRequest = { settingsOpen = false },
+            title = { Text("Настройки") },
+            text = {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    TextButton(
+                        onClick = {
+                            settingsOpen = false
+                            onProfile()
+                        }
+                    ) {
+                        Text("Профиль малыша")
+                    }
+                    profile?.let { p ->
+                        val age = SleepPredictor.correctedAgeDays(p, today)
+                        Text(
+                            "${age / 7} нед. ${age % 7} дн.${if (p.dueDate != null) " · скорректированный возраст" else ""}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    HorizontalDivider()
+                    SyncStatusDetails(family, pendingCount, syncStatus, zone, onRetry)
+                    HorizontalDivider()
+                    Text("Приложение", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "BabyLog ${BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    updateAction()
+                }
+            },
+            confirmButton = { TextButton(onClick = { settingsOpen = false }) { Text("Готово") } },
+        )
 }
 
 @Composable
@@ -1155,6 +1175,7 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SleepStatusCard(
     active: BabyEvent?,
@@ -1176,29 +1197,48 @@ internal fun SleepStatusCard(
             ),
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                if (active != null) "Сейчас спит" else "Сейчас бодрствует",
-                style = MaterialTheme.typography.titleLarge,
-            )
-            val since = active?.startedAt ?: lastWake
-            if (liveDuration) SleepElapsedText(since, rememberElapsedClock(now, since))
-            else SleepElapsedText(since, rememberUpdatedState(now))
-
-            Button(
-                onClick = { if (active == null) onStart() else onWake() },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    if (active == null) "Начать сон" else "Проснулась",
+                    if (active != null) "Сейчас спит" else "Сейчас бодрствует",
                     style = MaterialTheme.typography.titleMedium,
                 )
+                val since = active?.startedAt ?: lastWake
+                if (liveDuration) SleepElapsedText(since, rememberElapsedClock(now, since))
+                else SleepElapsedText(since, rememberUpdatedState(now))
             }
-            active?.let {
-                TextButton(onClick = { onEdit(it) }) {
-                    Text("Сон с ${clock(it.startedAt, zone)} · изменить")
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = { if (active == null) onStart() else onWake() },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                ) {
+                    Text(
+                        if (active == null) "Начать сон" else "Проснулась",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                active?.let {
+                    TextButton(
+                        onClick = { onEdit(it) },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text("С ${clock(it.startedAt, zone)}")
+                        Icon(
+                            Icons.Outlined.Edit,
+                            "Изменить текущий сон",
+                            Modifier.padding(start = 4.dp).size(20.dp),
+                        )
+                    }
                 }
             }
         }
@@ -1226,9 +1266,10 @@ internal fun SleepElapsedText(since: Long?, clock: State<Long>) {
                 since?.let { sleepStatusDuration(clock.value - it) } ?: "Начнём наблюдать её ритм"
             }
         }
-    Text(text, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Text(text, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun NextSleepCard(
     estimate: SleepEstimate?,
@@ -1237,70 +1278,71 @@ internal fun NextSleepCard(
     zone: ZoneId,
     current: CurrentSleepEstimate? = null,
 ) {
+    val expected = if (sleeping) current?.expectedWake else estimate?.expected
+    val earliest = if (sleeping) current?.earliestWake else estimate?.earliest
+    val latest = if (sleeping) current?.latestWake else estimate?.latest
     OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                if (sleeping) "Пробуждение" else "Следующий сон",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            val expected = if (sleeping) current?.expectedWake else estimate?.expected
-            val earliest = if (sleeping) current?.earliestWake else estimate?.earliest
-            val latest = if (sleeping) current?.latestWake else estimate?.latest
-            if (expected == null || earliest == null || latest == null) {
-                Text("Пока мало данных", style = MaterialTheme.typography.titleLarge)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
-                    "Добавляйте начало и конец сна — прогноз появится по истории записей.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (sleeping) "Пробуждение" else "Следующий сон",
+                    style = MaterialTheme.typography.titleMedium,
                 )
-            } else if (now > latest) {
-                Text("Окно прогноза прошло", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    if (sleeping) "Сон продолжается. Отметьте пробуждение, когда малыш проснётся."
-                    else "Ориентируйтесь на признаки усталости. Отметьте сон, когда малыш уснёт.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Text(
-                    "Около " + wakeClock(expected / 300_000 * 300_000, now, zone),
-                    style = MaterialTheme.typography.headlineMedium,
+                    when {
+                        expected == null || earliest == null || latest == null -> "Пока мало данных"
+                        now > latest -> "Окно прогноза прошло"
+                        else -> "Около " + wakeClock(expected / 300_000 * 300_000, now, zone)
+                    },
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                Text(
-                    "Ориентировочное окно",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            }
+            if (expected != null && earliest != null && latest != null && now <= latest) {
                 PredictionRange(earliest, expected, latest, now, zone)
-                Text(
-                    predictionExplanation(estimate, current, sleeping),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 if (expected < now)
                     Text(
                         "Ожидаемое время уже прошло; окно ещё открыто.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 if (sleeping && current != null) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    ) {
-                        SleepNumber(
-                            "Ожидается",
-                            duration(expected - current.startedAt),
-                            Modifier.weight(1f),
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text(
+                            "Длительность ~${duration(expected - current.startedAt)}",
+                            style = MaterialTheme.typography.bodySmall,
                         )
-                        SleepNumber(
-                            if (now <= expected) "До ориентира" else "После ориентира",
-                            duration(kotlin.math.abs(expected - now)),
-                            Modifier.weight(1f),
+                        Text(
+                            (if (now <= expected) "До ориентира · " else "После ориентира · ") +
+                                duration(kotlin.math.abs(expected - now)),
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SleepChartPeriod(days: Int, onChange: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { expanded = true }) { Text("Период: $days дней ▾") }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            listOf(7, 14, 30).forEach { count ->
+                DropdownMenuItem(
+                    text = { Text("$count дней") },
+                    onClick = {
+                        onChange(count)
+                        expanded = false
+                    },
+                    modifier = Modifier.semantics { selected = days == count },
+                )
             }
         }
     }

@@ -44,6 +44,27 @@ class SleepChartGestureTest {
         )
 
     @Test
+    fun selectingDateShowsOnlyThatDaysDaytimeSleep() {
+        compose.setContent {
+            BabyTheme {
+                Surface(Modifier.fillMaxWidth()) {
+                    SleepChart(listOf(event), emptyList(), start + 13 * 3_600_000, zone, 7, {})
+                }
+            }
+        }
+        compose
+            .onNodeWithTag("sleep-chart-day-total")
+            .assertTextContains("2 ч 0 мин", substring = true)
+        compose.onNodeWithContentDescription("Итоги сна за 14.10.2026").performClick()
+        compose.onNodeWithContentDescription("Итоги сна за 14.10.2026").assertIsSelected()
+        compose.onNodeWithTag("sleep-chart-day-total").assertTextContains("0 мин", substring = true)
+        compose.onNodeWithContentDescription("Итоги сна за 15.10.2026").performClick()
+        compose
+            .onNodeWithTag("sleep-chart-day-total")
+            .assertTextContains("2 ч 0 мин", substring = true)
+    }
+
+    @Test
     fun pinchDoesNotZoomOrSelectSleepAndTapStillOpensDetails() {
         var selected: BabyEvent? = null
         compose.setContent {

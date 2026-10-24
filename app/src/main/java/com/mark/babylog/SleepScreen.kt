@@ -133,7 +133,6 @@ fun SleepScreen(
     var family by remember { mutableStateOf(initialInvite != null) }
     var editing by remember { mutableStateOf<BabyEvent?>(null) }
     var adding by remember { mutableStateOf(false) }
-    var editEndFirst by remember { mutableStateOf(false) }
     val history = remember(events) { events.sortedByDescending { it.startedAt } }
     var chartBounds by remember { mutableStateOf<Rect?>(null) }
     var dismissChart by remember { mutableIntStateOf(0) }
@@ -164,7 +163,6 @@ fun SleepScreen(
                         finished,
                         zone = zone,
                         onEdit = {
-                            editEndFirst = true
                             editing = finished
                             recentlyFinished = null
                         },
@@ -306,9 +304,7 @@ fun SleepScreen(
             {
                 adding = false
                 editing = null
-                editEndFirst = false
             },
-            endFirst = editEndFirst,
             onSave = { start, end ->
                 val current = editing
                 if (current == null) vm.recordSleep(start, end!!)
@@ -318,12 +314,10 @@ fun SleepScreen(
                     )
                 adding = false
                 editing = null
-                editEndFirst = false
             },
             onDelete = {
                 editing?.let(vm::delete)
                 editing = null
-                editEndFirst = false
             },
         )
 }
@@ -550,12 +544,19 @@ internal fun SleepChart(
     val highlight = MaterialTheme.colorScheme.tertiary
     var inspection by
         remember(days, zone, initialViewport) { mutableStateOf<Pair<LocalDate, Float>?>(null) }
+    var selectedDay by remember(zone, today) { mutableStateOf(today) }
+    val validSessions = remember(events, now) { SleepPredictor.validSessions(events, now) }
     val textMeasurer = rememberTextMeasurer()
     val barTextStyle = MaterialTheme.typography.labelSmall
     Column(modifier.testTag("sleep-chart"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            "Наведите или удерживайте для времени · нажмите сон для подробностей",
+            "Нажмите дату для итогов дня · нажмите сон для подробностей",
             style = MaterialTheme.typography.labelSmall,
+        )
+        Text(
+            "${selectedDay.format(DateTimeFormatter.ofPattern("dd.MM"))} · Дневной сон: ${duration(daytimeSleepTotal(validSessions, selectedDay, now, zone))}",
+            Modifier.testTag("sleep-chart-day-total"),
+            style = MaterialTheme.typography.titleSmall,
         )
         val inspected = inspection
         val inspectedAxis = inspected?.let { SleepDayAxis(it.first, zone) }
@@ -607,7 +608,19 @@ internal fun SleepChart(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     day.format(DateTimeFormatter.ofPattern("dd.MM")),
-                    Modifier.width(54.dp),
+                    Modifier.width(54.dp)
+                        .heightIn(min = 38.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            if (selectedDay == day) highlight.copy(alpha = 0.15f)
+                            else Color.Transparent
+                        )
+                        .semantics {
+                            selected = selectedDay == day
+                            contentDescription = "Итоги сна за ${day.format(dateFormat)}"
+                        }
+                        .clickable { selectedDay = day }
+                        .wrapContentHeight(),
                     fontWeight = if (day == today) FontWeight.Bold else FontWeight.Normal,
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -1060,6 +1073,21 @@ private fun SleepChartTimeAxis(axis: SleepDayAxis, viewport: SleepChartViewport,
                 )
             }
         }
+    }
+}
+
+internal fun daytimeSleepTotal(
+    sessions: List<BabyEvent>,
+    day: LocalDate,
+    now: Long,
+    zone: ZoneId,
+): Long {
+    val dayEnd = minOf(now, day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())
+    return sessions.sumOf { session ->
+        val start = Instant.ofEpochMilli(session.startedAt).atZone(zone)
+        if (start.toLocalDate() == day && start.hour in 6..17) {
+            (minOf(session.endedAt ?: now, dayEnd) - session.startedAt).coerceAtLeast(0)
+        } else 0L
     }
 }
 

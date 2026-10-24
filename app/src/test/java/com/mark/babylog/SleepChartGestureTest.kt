@@ -58,7 +58,8 @@ class SleepChartGestureTest {
         compose.onNodeWithContentDescription("Итоги сна за 14.10.2026").performClick()
         compose.onNodeWithContentDescription("Итоги сна за 14.10.2026").assertIsSelected()
         compose.onNodeWithTag("sleep-chart-day-total").assertTextContains("0 мин", substring = true)
-        compose.onNodeWithContentDescription("Итоги сна за 15.10.2026").performClick()
+        compose.onNodeWithContentDescription("15.10.2026: сон 09:00 — 11:00").performClick()
+        compose.onNodeWithContentDescription("Итоги сна за 15.10.2026").assertIsSelected()
         compose
             .onNodeWithTag("sleep-chart-day-total")
             .assertTextContains("2 ч 0 мин", substring = true)
@@ -323,17 +324,40 @@ class SleepChartGestureTest {
         compose.setContent {
             BabyTheme {
                 Surface(Modifier.fillMaxWidth()) {
-                    SleepChart(events.value, emptyList(), start + 13 * 3_600_000, zone, 3, {})
+                    SleepChart(
+                        events.value,
+                        emptyList(),
+                        start + 13 * 3_600_000,
+                        zone,
+                        3,
+                        {},
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                    )
                 }
             }
         }
         val segments =
             compose.onAllNodesWithContentDescription("сон 22:00 — 06:00", substring = true)
-        segments[1].performClick()
+        compose.mainClock.advanceTimeBy(800)
+        compose.waitForIdle()
+        segments[1].performScrollTo().performClick()
         segments[0].assertIsSelected()
         segments[1].assertIsSelected()
         compose.onAllNodesWithTag("sleep-detail-card").assertCountEquals(1)
         compose.onNodeWithText("22:00 — 06:00").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Итоги сна за 15.10.2026").assertIsSelected()
+        compose.mainClock.advanceTimeBy(800)
+        compose.waitForIdle()
+        segments[0].performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Итоги сна за 14.10.2026").assertIsSelected()
+        compose.onNodeWithTag("sleep-chart-day-total").assertTextContains("14.10", substring = true)
+        compose.onAllNodesWithTag("sleep-detail-card").assertCountEquals(1)
+        compose.mainClock.advanceTimeBy(800)
+        compose.waitForIdle()
+        segments[1].performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Итоги сна за 15.10.2026").assertIsSelected()
+        compose.onNodeWithTag("sleep-chart-day-total").assertTextContains("15.10", substring = true)
+        compose.onAllNodesWithTag("sleep-detail-card").assertCountEquals(1)
         compose.runOnIdle { events.value = emptyList() }
         compose.onNodeWithTag("sleep-detail-card").assertDoesNotExist()
     }

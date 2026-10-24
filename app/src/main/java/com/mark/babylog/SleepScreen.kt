@@ -743,8 +743,9 @@ internal fun SleepChart(
                                             "${day.format(dateFormat)}: сон ${graphClock(e.startedAt, zone, axis.changesOffset)} — ${e.endedAt?.let { graphClock(it, zone, axis.changesOffset) } ?: "сейчас"}"
                                     }
                                     .clickable {
+                                        selectedDay = day
                                         selection =
-                                            if (selectedEvent?.remoteId == e.remoteId) null
+                                            if (selection == day to e.remoteId) null
                                             else day to e.remoteId
                                         if (selection != null) onSelect(e)
                                     },
@@ -801,8 +802,10 @@ internal fun SleepChart(
                                         selected = isSelected
                                     }
                                     .clickable {
+                                        selectedDay = day
                                         selection =
-                                            if (isSelected) null else day to "forecast:${f.start}"
+                                            if (selection == day to "forecast:${f.start}") null
+                                            else day to "forecast:${f.start}"
                                     }
                             )
                         }
@@ -820,6 +823,7 @@ internal fun SleepChart(
                                             "Прогноз пробуждения около ${clock(time, zone)}"
                                     }
                                     .clickable {
+                                        selectedDay = day
                                         events
                                             .firstOrNull {
                                                 it.endedAt == null &&
@@ -827,7 +831,7 @@ internal fun SleepChart(
                                             }
                                             ?.let {
                                                 selection =
-                                                    if (selectedEvent?.remoteId == it.remoteId) null
+                                                    if (selection == day to it.remoteId) null
                                                     else day to it.remoteId
                                             }
                                     }

@@ -1116,65 +1116,6 @@ internal fun daytimeSleepTotal(
     }
 }
 
-@Composable
-internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
-    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-    fun total(day: LocalDate): Long {
-        val a = day.atStartOfDay(zone).toInstant().toEpochMilli()
-        val b = minOf(now, day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())
-        return sessions.sumOf {
-            (minOf(it.endedAt ?: now, b) - maxOf(it.startedAt, a)).coerceAtLeast(0)
-        }
-    }
-    OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SleepNumber("Сон сегодня", duration(total(today)))
-            val naps =
-                sessions.count {
-                    Instant.ofEpochMilli(it.startedAt).atZone(zone).let { z ->
-                        z.toLocalDate() == today && z.hour in 6..17
-                    }
-                }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                SleepNumber("Дневных снов", "$naps", Modifier.weight(1f))
-                SleepNumber(
-                    "Самый долгий",
-                    duration(
-                        sessions
-                            .filter { (it.endedAt ?: now) > now - 86_400_000 }
-                            .maxOfOrNull {
-                                minOf(it.endedAt ?: now, now) -
-                                    maxOf(it.startedAt, now - 86_400_000)
-                            } ?: 0
-                    ),
-                    Modifier.weight(1f),
-                )
-            }
-            Text("Длительность по дням", style = MaterialTheme.typography.titleSmall)
-            repeat(7) { i ->
-                val day = today.minusDays((6 - i).toLong())
-                val ms = total(day)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        day.format(DateTimeFormatter.ofPattern("dd.MM")),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    LinearProgressIndicator(
-                        progress = {
-                            (ms.toFloat() / SleepDayAxis(day, zone).duration).coerceIn(0f, 1f)
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(duration(ms), style = MaterialTheme.typography.labelSmall)
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SleepStatusCard(
@@ -1345,18 +1286,6 @@ internal fun SleepChartPeriod(days: Int, onChange: (Int) -> Unit) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun SleepNumber(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     }
 }
 

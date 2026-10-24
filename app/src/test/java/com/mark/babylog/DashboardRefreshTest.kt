@@ -197,6 +197,27 @@ class DashboardRefreshTest {
     }
 
     @Test
+    fun statisticsSelectsDaysWithoutTreatingMissingLogsAsZeroSleep() {
+        val sessions =
+            listOf(
+                BabyEvent(
+                    type = EventType.SLEEP,
+                    detail = "BACK",
+                    startedAt = now - 3_600_000,
+                    endedAt = now,
+                    sleepRecordVersion = 1,
+                )
+            )
+        compose.setContent { BabyTheme { SleepTotals(sessions, now, zone) } }
+        compose.onNodeWithText("Дневных снов: 1").assertExists()
+        compose.onNodeWithContentDescription("14.10: нет записей").performClick()
+        compose.onNodeWithText("Нет записей").assertExists()
+        compose.onNodeWithText("Дневных снов: 1").assertDoesNotExist()
+        compose.onNodeWithContentDescription("15.10: всего", substring = true).performClick()
+        compose.onNodeWithText("Дневных снов: 1").assertExists()
+    }
+
+    @Test
     fun expiredAndMissingPredictionsDoNotShowPreciseTime() {
         val estimate =
             mutableStateOf<SleepEstimate?>(

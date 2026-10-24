@@ -206,6 +206,7 @@ fun SleepScreen(
                     liveDuration = true,
                 )
             }
+            item { com.mark.babylog.audio.SoundscapeCard() }
             item {
                 NextSleepCard(prediction.next, active != null, displayNow, zone, prediction.current)
             }

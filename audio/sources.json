@@ -1,0 +1,72 @@
+{
+  "recordings": [
+    {
+      "id": "rain",
+      "title": "Дождь",
+      "author": "alex36917",
+      "original_title": "rain ambience",
+      "source_url": "https://freesound.org/people/alex36917/sounds/524605/",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "editor": "Porrumentzio (Blanket)",
+      "crossfade_seconds": 6,
+      "download_url": "https://raw.githubusercontent.com/rafaelmardojai/blanket/775f2a767230a9681850d1b1e085be58656f1382/data/resources/sounds/rain.ogg",
+      "source_sha256": "b84c1daf259a24283be40b7663656d17676df4eb60c1e0332820570db891848a",
+      "source_collection": "Blanket",
+      "collection_url": "https://github.com/rafaelmardojai/blanket/tree/775f2a767230a9681850d1b1e085be58656f1382",
+      "changes": "BabyLog: circular crossfade for a seamless loop, matched loudness, peak limiting where needed; lossless FLAC packaging. Original stereo and sample rate retained."
+    },
+    {
+      "id": "fire",
+      "title": "Камин",
+      "author": "kyles",
+      "original_title": "fire in fireplace close1.flac",
+      "source_url": "https://freesound.org/people/kyles/sounds/454016/",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "editor": null,
+      "crossfade_seconds": 6,
+      "download_url": "https://cdn.freesound.org/previews/454/454016_612689-hq.mp3",
+      "source_sha256": "e682e34d37b044f71760b44c0f7fa3653259dea550f8976d17f5549d9bbb372d",
+      "source_collection": "Freesound",
+      "collection_url": "https://freesound.org/people/kyles/sounds/454016/",
+      "changes": "BabyLog: circular crossfade for a seamless loop, matched loudness, peak limiting where needed; lossless FLAC packaging. Original stereo and sample rate retained.",
+      "source_variant": "Public HQ MP3 preview of the stereo field recording; original download is login-only."
+    },
+    {
+      "id": "ocean",
+      "title": "Океан",
+      "author": "Luftrum",
+      "original_title": "oceanwavescrushing.wav",
+      "source_url": "https://freesound.org/people/Luftrum/sounds/48412/",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "editor": "Porrumentzio (Blanket)",
+      "crossfade_seconds": 6,
+      "download_url": "https://raw.githubusercontent.com/rafaelmardojai/blanket/775f2a767230a9681850d1b1e085be58656f1382/data/resources/sounds/waves.ogg",
+      "source_sha256": "20e1aec7c7542f71645275871650881ea33bc92bd9816b243ea920bb1daa51a0",
+      "source_collection": "Blanket",
+      "collection_url": "https://github.com/rafaelmardojai/blanket/tree/775f2a767230a9681850d1b1e085be58656f1382",
+      "changes": "BabyLog: circular crossfade for a seamless loop, matched loudness, peak limiting where needed; lossless FLAC packaging. Original stereo and sample rate retained."
+    },
+    {
+      "id": "brook",
+      "title": "Ручей",
+      "author": "gluckose",
+      "original_title": "stream2.wav",
+      "source_url": "https://freesound.org/people/gluckose/sounds/333987/",
+      "license": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "editor": null,
+      "crossfade_seconds": 4,
+      "download_url": "https://raw.githubusercontent.com/rafaelmardojai/blanket/775f2a767230a9681850d1b1e085be58656f1382/data/resources/sounds/stream.ogg",
+      "source_sha256": "ce372c5db561168636647dd7d4aac39ef1785ae5d415ad0e589186ce1b7c5796",
+      "source_collection": "Blanket",
+      "collection_url": "https://github.com/rafaelmardojai/blanket/tree/775f2a767230a9681850d1b1e085be58656f1382",
+      "changes": "BabyLog: circular crossfade for a seamless loop, matched loudness, peak limiting where needed; lossless FLAC packaging. Original stereo and sample rate retained."
+    }
+  ],
+  "license_checked_on": "2026-10-26",
+  "upstream_commit": "775f2a767230a9681850d1b1e085be58656f1382",
+  "upstream_credits_url": "https://github.com/rafaelmardojai/blanket/blob/775f2a767230a9681850d1b1e085be58656f1382/SOUNDS_LICENSING.md"
+}

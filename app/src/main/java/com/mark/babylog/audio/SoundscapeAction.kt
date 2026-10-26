@@ -30,6 +30,7 @@ fun SoundscapeAction() {
     var playing by remember { mutableStateOf(false) }
     var volume by remember { mutableFloatStateOf(.25f) }
     var error by remember { mutableStateOf<String?>(null) }
+    var credits by rememberSaveable { mutableStateOf(false) }
     DisposableEffect(context, connect) {
         if (!connect) return@DisposableEffect onDispose {}
         val future =
@@ -172,9 +173,11 @@ fun SoundscapeAction() {
                         "Начните с тихой громкости и держите телефон подальше от малыша.",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    TextButton(onClick = { credits = true }) { Text("Записи и лицензии") }
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
             confirmButton = { TextButton(onClick = { open = false }) { Text("Готово") } },
         )
+    if (credits) SoundscapeCreditsDialog(onDismiss = { credits = false })
 }

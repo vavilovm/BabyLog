@@ -1,0 +1,74 @@
+[
+  {
+    "id": "rain",
+    "file": "rain.flac",
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 118.577778,
+    "lufs": -27.0,
+    "peak_dbfs": -6.02,
+    "seam_max": 0.029388427734375,
+    "adjacent_delta_rms": 0.024162709712982178,
+    "sha256": "575c927b3340855c656f0ff814e037676c90dbb5a7f8981fe7ac139f3bbc7c18"
+  },
+  {
+    "id": "fire",
+    "file": "fire.flac",
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 125.264479,
+    "lufs": -27.13,
+    "peak_dbfs": -6.02,
+    "seam_max": 0.002105712890625,
+    "adjacent_delta_rms": 0.012548579834401608,
+    "sha256": "0013a8dd38aedde879e8fc7bc25e94431c8b9dec8105b5972c20ea976b0b46f5"
+  },
+  {
+    "id": "ocean",
+    "file": "ocean.flac",
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 112.034263,
+    "lufs": -27.0,
+    "peak_dbfs": -7.45,
+    "seam_max": 0.008544921875,
+    "adjacent_delta_rms": 0.010996531695127487,
+    "sha256": "085170713f551f1c1648510101552813ee67d79309ef6a5ba9ae7bd20a4f8fee"
+  },
+  {
+    "id": "brook",
+    "file": "brook.flac",
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 141.528866,
+    "lufs": -27.0,
+    "peak_dbfs": -6.02,
+    "seam_max": 0.0142822265625,
+    "adjacent_delta_rms": 0.013376737013459206,
+    "sha256": "118e4ed45ffae60d3458d893584772a1db8a9584b1d1159c75e25cac4d2613f1"
+  },
+  {
+    "id": "white",
+    "file": "white.flac",
+    "sample_rate": 48000,
+    "channels": 1,
+    "duration_seconds": 60.0,
+    "lufs": -27.0,
+    "peak_dbfs": -15.23,
+    "seam_max": 0.0318603515625,
+    "adjacent_delta_rms": 0.027577338740229607,
+    "sha256": "08d275469e75f67ae906e042218938de4452a222f6791171b6e6cb07fdf61045"
+  },
+  {
+    "id": "pink",
+    "file": "pink.flac",
+    "sample_rate": 48000,
+    "channels": 1,
+    "duration_seconds": 60.0,
+    "lufs": -27.0,
+    "peak_dbfs": -13.16,
+    "seam_max": 0.00299072265625,
+    "adjacent_delta_rms": 0.01761106215417385,
+    "sha256": "ce4762f6dae3262d581dbd2c812d123d1d21768df2623ffefe57e02d9e873c9c"
+  }
+]

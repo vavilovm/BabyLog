@@ -4,7 +4,10 @@ import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
 
-class BabyLogRepository(private val db: BabyDatabase) {
+class BabyLogRepository(
+    private val db: BabyDatabase,
+    private val diagnostic: (String) -> Unit = {},
+) {
     val dao = db.events()
     val membership = dao.observeMembership()
 
@@ -262,6 +265,9 @@ class BabyLogRepository(private val db: BabyDatabase) {
     }
 
     private suspend fun enqueue(command: String, event: BabyEvent, time: Long) {
+        diagnostic(
+            "event_local command=$command id=${event.remoteId} updated=${event.updatedAt} end=${event.endedAt} deleted=${event.deletedAt}"
+        )
         if (dao.membership() == null) return
         dao.put(
             SyncOperation(
@@ -312,11 +318,15 @@ class BabyLogRepository(private val db: BabyDatabase) {
                     .associateBy { it.remoteId }
             parsed.forEach eventLoop@{ remote ->
                 val existing = existingByRemote[remote.remoteId]
-                if (
-                    existing?.syncState == SyncState.PENDING &&
-                        existing.updatedAt > remote.updatedAt
-                )
+                if (existing != null && existing.updatedAt > remote.updatedAt) {
+                    diagnostic(
+                        "event_skip_stale id=${remote.remoteId} localUpdated=${existing.updatedAt} remoteUpdated=${remote.updatedAt} localEnd=${existing.endedAt} remoteEnd=${remote.endedAt}"
+                    )
                     return@eventLoop
+                }
+                diagnostic(
+                    "event_apply id=${remote.remoteId} updated=${remote.updatedAt} end=${remote.endedAt} deleted=${remote.deletedAt} conflict=${remote.sleepConflict}"
+                )
                 val event =
                     BabyEvent(
                         id = existing?.id ?: 0,

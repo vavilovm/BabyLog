@@ -72,8 +72,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private val historyLimit = MutableStateFlow(100)
-    private val _errors = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val errors = _errors.asSharedFlow()
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val messages = _messages.asSharedFlow()
     val state =
         combine(historyLimit.flatMapLatest(dao::observeRecent), dao.observeVisibleCount()) {
                 e,
@@ -155,14 +155,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { onDone(familyResult { babyApp.familySync.createInvite() }) }
 
     fun retrySync() = launchAction {
-        if (!babyApp.familySync.sync()) error("Синхронизация не удалась")
+        if (!babyApp.familySync.sync(forceFullPull = true)) error("Синхронизация не удалась")
+        _messages.emit(
+            if (dao.membership() == null) "Сохранено на устройстве · семья не подключена"
+            else "Синхронизация завершена"
+        )
     }
 
     private fun launchAction(block: suspend () -> Unit) =
         viewModelScope.launch {
             familyResult { block() }
                 .onFailure { error ->
-                    _errors.emit(error.message ?: "Не удалось выполнить действие")
+                    _messages.emit(error.message ?: "Не удалось выполнить действие")
                 }
         }
 

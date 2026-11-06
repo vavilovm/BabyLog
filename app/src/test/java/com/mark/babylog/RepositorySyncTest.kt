@@ -34,6 +34,69 @@ class RepositorySyncTest {
     }
 
     @Test
+    fun staleSnapshotCannotReopenSyncedSleep() = runTest {
+        val finished =
+            BabyEvent(
+                type = EventType.SLEEP,
+                detail = "BACK",
+                startedAt = 1_000,
+                endedAt = 5_000,
+                updatedAt = 6_000,
+                sleepRecordVersion = 1,
+                syncState = SyncState.SYNCED,
+            )
+        db.events().insert(finished)
+        repository.applyRemote(
+            listOf(
+                mapOf(
+                    "remoteId" to finished.remoteId,
+                    "type" to "SLEEP",
+                    "detail" to "BACK",
+                    "startedAt" to 1_000L,
+                    "endedAt" to null,
+                    "updatedAt" to 2_000L,
+                    "sleepRecordVersion" to 1,
+                    "sleepConflict" to true,
+                )
+            )
+        )
+        val result = db.events().allForTest().single()
+        assertEquals(5_000L, result.endedAt)
+        assertEquals(SyncState.SYNCED, result.syncState)
+    }
+
+    @Test
+    fun newerSnapshotTransfersSleepEndingAndClearsConflict() = runTest {
+        val active =
+            BabyEvent(
+                type = EventType.SLEEP,
+                detail = "BACK",
+                startedAt = 1_000,
+                updatedAt = 2_000,
+                sleepRecordVersion = 1,
+                syncState = SyncState.CONFLICT,
+            )
+        db.events().insert(active)
+        repository.applyRemote(
+            listOf(
+                mapOf(
+                    "remoteId" to active.remoteId,
+                    "type" to "SLEEP",
+                    "detail" to "BACK",
+                    "startedAt" to 1_000L,
+                    "endedAt" to 5_000L,
+                    "updatedAt" to 6_000L,
+                    "sleepRecordVersion" to 1,
+                    "sleepConflict" to false,
+                )
+            )
+        )
+        val result = db.events().allForTest().single()
+        assertEquals(5_000L, result.endedAt)
+        assertEquals(SyncState.SYNCED, result.syncState)
+    }
+
+    @Test
     fun familyActionIsImmediateAndQueued() = runTest {
         db.events()
             .putMembership(

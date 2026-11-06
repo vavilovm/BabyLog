@@ -31,6 +31,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +51,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInRoot
@@ -149,8 +152,18 @@ fun SleepScreen(
                 finishingId = null
             }
     }
+    val pullRefresh = rememberPullToRefreshState()
+    LaunchedEffect(pullRefresh.isRefreshing) {
+        if (pullRefresh.isRefreshing) {
+            try {
+                vm.retrySync().join()
+            } finally {
+                pullRefresh.endRefresh()
+            }
+        }
+    }
     val snack = remember { SnackbarHostState() }
-    LaunchedEffect(Unit) { vm.errors.collect { snack.showSnackbar(it) } }
+    LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
     LaunchedEffect(initialInvite) {
         if (initialInvite != null) {
             family = true
@@ -189,96 +202,113 @@ fun SleepScreen(
             )
         },
     ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Box(
+            Modifier.fillMaxSize().padding(padding).nestedScroll(pullRefresh.nestedScrollConnection)
         ) {
-            item {
-                SleepStatusCard(
-                    active,
-                    lastWake,
-                    now,
-                    zone,
-                    vm::beginSleep,
-                    {
-                        finishingId = active?.remoteId
-                        vm.finishSleep()
-                    },
-                    { editing = it },
-                    liveDuration = true,
-                )
-            }
-            item {
-                NextSleepCard(prediction.next, active != null, displayNow, zone, prediction.current)
-            }
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item {
+                    SleepStatusCard(
+                        active,
+                        lastWake,
+                        now,
+                        zone,
+                        vm::beginSleep,
+                        {
+                            finishingId = active?.remoteId
+                            vm.finishSleep()
+                        },
+                        { editing = it },
+                        liveDuration = true,
+                    )
+                }
+                item {
+                    NextSleepCard(
+                        prediction.next,
+                        active != null,
+                        displayNow,
+                        zone,
+                        prediction.current,
+                    )
+                }
 
-            if (prediction.conflicts.isNotEmpty())
-                item { Text("Проверьте время в истории", color = MaterialTheme.colorScheme.error) }
-            item {
-                Text("Ритм сна", style = MaterialTheme.typography.titleLarge)
-                Text("Местное время · ${zone.id}", style = MaterialTheme.typography.labelSmall)
-                profile
-                    ?.rhythmZoneId
-                    ?.takeIf { it != zone.id }
-                    ?.let {
-                        Text(
-                            "Ритм по домашнему поясу · $it",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                if (prediction.conflicts.isNotEmpty())
+                    item {
+                        Text("Проверьте время в истории", color = MaterialTheme.colorScheme.error)
                     }
-            }
-            item {
-                SleepChart(
-                    events,
-                    prediction.forecast,
-                    displayNow,
-                    zone,
-                    days,
-                    onSelect = {},
-                    onEdit = { editing = it },
-                    current = prediction.current,
-                    modifier = Modifier.onGloballyPositioned { chartBounds = it.boundsInRoot() },
-                    dismissSignal = dismissChart,
-                )
-            }
-            item { SleepChartPeriod(days, onChange = { days = it }) }
-            item { SleepTotals(sessions, displayNow, zone) }
-            item {
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    TextButton(onClick = { adding = true }) { Text("+ Добавить сон") }
-                    TextButton(onClick = { family = true }) { Text("Семья") }
-                }
-            }
-            item { Text("История сна", style = MaterialTheme.typography.titleLarge) }
-            items(history, key = { it.remoteId }) { e ->
-                OutlinedCard(Modifier.fillMaxWidth().clickable { editing = e }) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(
-                            Instant.ofEpochMilli(e.startedAt).atZone(zone).format(dateFormat),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                        Text(
-                            "${clock(e.startedAt, zone)} — ${e.endedAt?.let { clock(it, zone) } ?: "спит"}",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(
-                            if (e.sleepRecordVersion == 0)
-                                "Старая отметка · длительность неизвестна"
-                            else duration((e.endedAt ?: now) - e.startedAt)
-                        )
-                        if (e.remoteId in prediction.conflicts)
+                item {
+                    Text("Ритм сна", style = MaterialTheme.typography.titleLarge)
+                    Text("Местное время · ${zone.id}", style = MaterialTheme.typography.labelSmall)
+                    profile
+                        ?.rhythmZoneId
+                        ?.takeIf { it != zone.id }
+                        ?.let {
                             Text(
-                                "Проверьте время: конфликт записей",
-                                color = MaterialTheme.colorScheme.error,
+                                "Ритм по домашнему поясу · $it",
+                                style = MaterialTheme.typography.labelSmall,
                             )
+                        }
+                }
+                item {
+                    SleepChart(
+                        events,
+                        prediction.forecast,
+                        displayNow,
+                        zone,
+                        days,
+                        onSelect = {},
+                        onEdit = { editing = it },
+                        current = prediction.current,
+                        modifier =
+                            Modifier.onGloballyPositioned { chartBounds = it.boundsInRoot() },
+                        dismissSignal = dismissChart,
+                    )
+                }
+                item { SleepChartPeriod(days, onChange = { days = it }) }
+                item { SleepTotals(sessions, displayNow, zone) }
+                item {
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        TextButton(onClick = { adding = true }) { Text("+ Добавить сон") }
+                        TextButton(onClick = { family = true }) { Text("Семья") }
                     }
                 }
+                item { Text("История сна", style = MaterialTheme.typography.titleLarge) }
+                items(history, key = { it.remoteId }) { e ->
+                    OutlinedCard(Modifier.fillMaxWidth().clickable { editing = e }) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(
+                                Instant.ofEpochMilli(e.startedAt).atZone(zone).format(dateFormat),
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Text(
+                                "${clock(e.startedAt, zone)} — ${e.endedAt?.let { clock(it, zone) } ?: "спит"}",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                if (e.sleepRecordVersion == 0)
+                                    "Старая отметка · длительность неизвестна"
+                                else duration((e.endedAt ?: now) - e.startedAt)
+                            )
+                            if (e.remoteId in prediction.conflicts)
+                                Text(
+                                    "Проверьте время: конфликт записей",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                        }
+                    }
+                }
+                item {
+                    val context = LocalContext.current
+                    TextButton(onClick = { vm.shareCsv(context) }) { Text("Экспорт журнала") }
+                }
             }
-            item {
-                val context = LocalContext.current
-                TextButton(onClick = { vm.shareCsv(context) }) { Text("Экспорт журнала") }
-            }
+            PullToRefreshContainer(
+                state = pullRefresh,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
         }
     }
     if (settings || (profileLoaded && profile == null))
@@ -528,6 +558,12 @@ internal fun SleepAppBar(
                     }
                     HorizontalDivider()
                     SyncStatusDetails(family, pendingCount, syncStatus, zone, onRetry)
+                    val diagnosticContext = LocalContext.current
+                    TextButton(
+                        onClick = { com.mark.babylog.sync.SyncDiagnostics.share(diagnosticContext) }
+                    ) {
+                        Text("Поделиться диагностикой")
+                    }
                     HorizontalDivider()
                     Text("Приложение", style = MaterialTheme.typography.titleSmall)
                     Text(

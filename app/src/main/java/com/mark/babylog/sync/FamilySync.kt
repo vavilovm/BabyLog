@@ -7,6 +7,7 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Source
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.messaging.FirebaseMessaging
 import com.mark.babylog.BabyLogApp
@@ -143,26 +144,43 @@ class FamilySync(private val app: BabyLogApp) {
             .apply()
     }
 
-    suspend fun sync(): Boolean =
+    suspend fun sync(forceFullPull: Boolean = false): Boolean =
         syncMutex.withLock {
-            if (!available || dao.membership() == null) return@withLock true
-            runFamilySync(status) {
-                auth()
-                registerCurrentToken()
-                while (true) {
-                    val pending = dao.pending()
-                    if (pending.isEmpty()) break
-                    pushBatch(pending)
-                }
-                pull()
-                preferences
-                    .edit()
-                    .putLong("last_successful_sync", System.currentTimeMillis())
-                    .apply()
+            if (dao.membership() == null) {
+                SyncDiagnostics.record("sync_skipped no_family")
+                return@withLock true
             }
+            if (!available) {
+                SyncDiagnostics.record("sync_unavailable no_firebase")
+                status.value = status.value.copy(error = "Синхронизация не настроена")
+                return@withLock false
+            }
+            SyncDiagnostics.record("sync_start full=$forceFullPull")
+            val success =
+                runFamilySync(status) {
+                    auth()
+                    registerCurrentToken()
+                    while (true) {
+                        val pending = dao.pending()
+                        if (pending.isEmpty()) break
+                        pushBatch(pending)
+                    }
+                    pull(forceFull = forceFullPull)
+                    preferences
+                        .edit()
+                        .putLong("last_successful_sync", System.currentTimeMillis())
+                        .apply()
+                }
+            SyncDiagnostics.record("sync_finish success=$success error=${status.value.error}")
+            success
         }
 
     private suspend fun pushBatch(operations: List<SyncOperation>) {
+        operations.forEach {
+            SyncDiagnostics.record(
+                "push commandId=${it.id} command=${it.command} occurredAt=${it.occurredAt}"
+            )
+        }
         val commands =
             operations.map { op ->
                 mapOf(
@@ -179,9 +197,11 @@ class FamilySync(private val app: BabyLogApp) {
                     .getHttpsCallable("processCommandsV2")
                     .call(mapOf("commands" to commands))
                     .await()
+                SyncDiagnostics.record("push_ack count=${operations.size}")
                 operations.forEach { dao.removeOperation(it.id) }
             },
             legacy = { op ->
+                SyncDiagnostics.record("push_legacy commandId=${op.id}")
                 FirebaseFunctions.getInstance()
                     .getHttpsCallable("processCommand")
                     .call(
@@ -196,39 +216,45 @@ class FamilySync(private val app: BabyLogApp) {
                 dao.removeOperation(op.id)
             },
             failed = { op, error ->
+                SyncDiagnostics.record(
+                    "push_failed commandId=${op.id} type=${error.javaClass.simpleName}"
+                )
                 dao.failOperation(op.id, error.message ?: "Ошибка синхронизации")
             },
         )
     }
 
-    suspend fun pull(adoptSharedProfile: Boolean = false) {
+    suspend fun pull(adoptSharedProfile: Boolean = false, forceFull: Boolean = false) {
         val owner = dao.membership() ?: return
         val family =
             FirebaseFirestore.getInstance().collection("households").document(owner.householdId)
-        val cursor = dao.metadata(revisionKey)?.toLongOrNull()
-        val profileSnapshot = family.collection("profiles").document("baby").get().await()
+        val cursor = if (forceFull) null else dao.metadata(revisionKey)?.toLongOrNull()
+        val profileSnapshot =
+            family.collection("profiles").document("baby").get(Source.SERVER).await()
         profileSnapshot.data?.let {
             app.repository.applyProfile(it, adoptShared = adoptSharedProfile)
         }
-        val targetRevision = family.get().await().getLong("revision")
+        val targetRevision = family.get(Source.SERVER).await().getLong("revision")
+        SyncDiagnostics.record("pull cursor=$cursor target=$targetRevision")
         if (cursor != null && targetRevision != null && targetRevision <= cursor) return
         val (eventSnapshot, reminderSnapshot, completionSnapshot) =
             coroutineScope {
                 suspend fun changes(collection: String) =
                     if (cursor == null || targetRevision == null)
-                        family.collection(collection).get().await()
+                        family.collection(collection).get(Source.SERVER).await()
                     else
                         family
                             .collection(collection)
                             .whereGreaterThan("revision", cursor)
                             .whereLessThanOrEqualTo("revision", targetRevision)
-                            .get()
+                            .get(Source.SERVER)
                             .await()
                 val events = async { changes("events") }
                 val reminders = async { changes("reminders") }
                 val completions = async { changes("reminderCompletions") }
                 Triple(events.await(), reminders.await(), completions.await())
             }
+        SyncDiagnostics.record("pull_events count=${eventSnapshot.size()}")
         app.repository.applyRemote(eventSnapshot.documents.mapNotNull { it.data })
         app.reminderRepository.applyRemoteReminders(
             reminderSnapshot.documents.mapNotNull { it.data }
@@ -263,12 +289,16 @@ class FamilySync(private val app: BabyLogApp) {
         listeners +=
             changes("events").addSnapshotListener { snapshot, error ->
                 if (error != null) {
+                    SyncDiagnostics.record("realtime_error code=${error.code}")
                     status.value = status.value.copy(error = "Не удалось синхронизировать")
                     return@addSnapshotListener
                 }
                 snapshot ?: return@addSnapshotListener
                 app.appScope.launch {
                     try {
+                        SyncDiagnostics.record(
+                            "realtime_events count=${snapshot.documentChanges.size} cache=${snapshot.metadata.isFromCache}"
+                        )
                         app.repository.applyRemote(
                             snapshot.documentChanges.map { it.document.data }
                         )
@@ -276,6 +306,9 @@ class FamilySync(private val app: BabyLogApp) {
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
+                        SyncDiagnostics.record(
+                            "realtime_apply_error type=${error.javaClass.simpleName}"
+                        )
                         status.value = status.value.copy(error = "Не удалось синхронизировать")
                     }
                 }
@@ -283,6 +316,7 @@ class FamilySync(private val app: BabyLogApp) {
         listeners +=
             changes("reminders").addSnapshotListener { snapshot, error ->
                 if (error != null) {
+                    SyncDiagnostics.record("realtime_error code=${error.code}")
                     status.value = status.value.copy(error = "Не удалось синхронизировать")
                     return@addSnapshotListener
                 }
@@ -295,6 +329,9 @@ class FamilySync(private val app: BabyLogApp) {
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
+                        SyncDiagnostics.record(
+                            "realtime_apply_error type=${error.javaClass.simpleName}"
+                        )
                         status.value = status.value.copy(error = "Не удалось синхронизировать")
                     }
                 }
@@ -302,6 +339,7 @@ class FamilySync(private val app: BabyLogApp) {
         listeners +=
             changes("reminderCompletions").addSnapshotListener { snapshot, error ->
                 if (error != null) {
+                    SyncDiagnostics.record("realtime_error code=${error.code}")
                     status.value = status.value.copy(error = "Не удалось синхронизировать")
                     return@addSnapshotListener
                 }
@@ -314,6 +352,9 @@ class FamilySync(private val app: BabyLogApp) {
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
+                        SyncDiagnostics.record(
+                            "realtime_apply_error type=${error.javaClass.simpleName}"
+                        )
                         status.value = status.value.copy(error = "Не удалось синхронизировать")
                     }
                 }
@@ -412,6 +453,13 @@ internal suspend fun runFamilySync(
         throw cancelled
     } catch (error: Exception) {
         Log.w("BabyLog", "Family sync failed", error)
+        val code =
+            when (error) {
+                is com.google.firebase.functions.FirebaseFunctionsException -> error.code.name
+                is com.google.firebase.firestore.FirebaseFirestoreException -> error.code.name
+                else -> "unknown"
+            }
+        SyncDiagnostics.record("sync_error type=${error.javaClass.simpleName} code=$code")
         status.value = status.value.copy(error = "Не удалось синхронизировать")
         false
     } finally {

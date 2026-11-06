@@ -30,12 +30,15 @@ class BabyLogApp : Application() {
             )
             .build()
     }
-    val repository by lazy { BabyLogRepository(database) }
+    val repository by lazy {
+        BabyLogRepository(database, com.mark.babylog.sync.SyncDiagnostics::record)
+    }
     val reminderRepository by lazy { ReminderRepository(this) }
     val familySync by lazy { FamilySync(this) }
 
     override fun onCreate() {
         super.onCreate()
+        com.mark.babylog.sync.SyncDiagnostics.initialize(this)
         SyncWorker.periodic(this)
         appScope.launch {
             RetiredReminderNotifications.cancelAll(this@BabyLogApp)

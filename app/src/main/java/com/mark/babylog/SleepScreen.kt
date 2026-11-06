@@ -275,7 +275,21 @@ fun SleepScreen(
                         TextButton(onClick = { family = true }) { Text("Семья") }
                     }
                 }
-                item { Text("История сна", style = MaterialTheme.typography.titleLarge) }
+                item {
+                    val context = LocalContext.current
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "История сна",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                        TextButton(onClick = { vm.shareCsv(context) }) { Text("Экспорт") }
+                    }
+                }
                 items(history, key = { it.remoteId }) { e ->
                     OutlinedCard(Modifier.fillMaxWidth().clickable { editing = e }) {
                         Column(Modifier.padding(16.dp)) {
@@ -299,10 +313,6 @@ fun SleepScreen(
                                 )
                         }
                     }
-                }
-                item {
-                    val context = LocalContext.current
-                    TextButton(onClick = { vm.shareCsv(context) }) { Text("Экспорт журнала") }
                 }
             }
             PullToRefreshContainer(

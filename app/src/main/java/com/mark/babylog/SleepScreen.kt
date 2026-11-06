@@ -210,6 +210,39 @@ fun SleepScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (prediction.conflicts.isNotEmpty()) {
+                    item {
+                        Card(
+                            colors =
+                                CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer
+                                ),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    "Нужно проверить записи сна",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    "Время записей противоречит друг другу. Пока конфликт не исправлен, эти записи не учитываются в прогнозе."
+                                )
+                                history
+                                    .filter { it.remoteId in prediction.conflicts }
+                                    .forEach { event ->
+                                        TextButton(onClick = { editing = event }) {
+                                            Text(
+                                                "Проверить: ${Instant.ofEpochMilli(event.startedAt).atZone(zone).format(dateFormat)} · ${clock(event.startedAt, zone)} — ${event.endedAt?.let { clock(it, zone) } ?: "спит"}"
+                                            )
+                                        }
+                                    }
+                            }
+                        }
+                    }
+                }
                 item {
                     SleepStatusCard(
                         active,
@@ -235,10 +268,6 @@ fun SleepScreen(
                     )
                 }
 
-                if (prediction.conflicts.isNotEmpty())
-                    item {
-                        Text("Проверьте время в истории", color = MaterialTheme.colorScheme.error)
-                    }
                 item {
                     Text("Ритм сна", style = MaterialTheme.typography.titleLarge)
                     Text("Местное время · ${zone.id}", style = MaterialTheme.typography.labelSmall)
@@ -616,10 +645,6 @@ internal fun SleepChart(
     val textMeasurer = rememberTextMeasurer()
     val barTextStyle = MaterialTheme.typography.labelSmall
     Column(modifier.testTag("sleep-chart"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            "Нажмите дату для итогов дня · нажмите сон для подробностей",
-            style = MaterialTheme.typography.labelSmall,
-        )
         Text(
             "${selectedDay.format(DateTimeFormatter.ofPattern("dd.MM"))} · Дневной сон: ${duration(daytimeSleepTotal(validSessions, selectedDay, now, zone))}",
             Modifier.testTag("sleep-chart-day-total"),

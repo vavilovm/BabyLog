@@ -175,6 +175,33 @@ class BabyLogRepository(
 
     suspend fun updateEvent(event: BabyEvent) =
         db.withTransaction {
+            val sources = sleepSources(event)
+            sources.forEach { source ->
+                updateSingleEvent(
+                    source.copy(
+                        startedAt = event.startedAt,
+                        endedAt = event.endedAt,
+                        detail = event.detail,
+                        sleepRecordVersion = event.sleepRecordVersion,
+                    )
+                )
+            }
+        }
+
+    private suspend fun sleepSources(event: BabyEvent): List<BabyEvent> {
+        if (event.type != EventType.SLEEP || event.sleepRecordVersion != 1) return listOf(event)
+        val resolution =
+            SleepConflictResolver.resolve(dao.rawSleepSnapshot(), System.currentTimeMillis())
+                .firstOrNull {
+                    it.merged.remoteId == event.remoteId ||
+                        it.duplicates.any { source -> source.remoteId == event.remoteId }
+                } ?: return listOf(event)
+        val ids = (listOf(resolution.merged) + resolution.duplicates).map { it.remoteId }
+        return dao.byRemoteIds(ids)
+    }
+
+    private suspend fun updateSingleEvent(event: BabyEvent) =
+        db.withTransaction {
             val owner = dao.membership()
             val changed =
                 event.copy(
@@ -201,6 +228,9 @@ class BabyLogRepository(
         }
 
     suspend fun deleteEvent(event: BabyEvent) =
+        db.withTransaction { sleepSources(event).forEach { deleteSingleEvent(it) } }
+
+    private suspend fun deleteSingleEvent(event: BabyEvent) =
         db.withTransaction {
             val now = System.currentTimeMillis()
             val deleted =

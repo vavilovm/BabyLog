@@ -92,7 +92,12 @@ class TimedSleepTest {
                     )
                 )
             )
-            assertEquals(SyncState.CONFLICT, db.events().allForTest().last().syncState)
+            val merged = db.events().sleepSnapshot(0).single()
+            assertEquals(2000L, merged.startedAt)
+            assertNull(merged.endedAt)
+            assertEquals(SyncState.PENDING, merged.syncState)
+            assertEquals(2, db.events().allForTest().size)
+            assertFalse(db.events().pending().any { it.command == "DELETE" })
             repo.applyProfile(mapOf("birthday" to "2026-06-30", "updatedAt" to 5L))
             assertEquals("2026-07-01", db.events().profile()!!.birthday)
             repo.applyProfile(mapOf("birthday" to "2026-06-30", "updatedAt" to 20L))
@@ -116,6 +121,59 @@ class TimedSleepTest {
             assertEquals("Asia/Tokyo", db.events().profile()!!.rhythmZoneId)
             repo.saveProfile(BabyProfile(birthday = "2026-07-01", updatedAt = 50L))
             assertEquals("Asia/Tokyo", db.events().profile()!!.rhythmZoneId)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun mergedSleepActionsUpdateEverySourceAndLateWakeIsPreserved() = runTest {
+        val db =
+            Room.inMemoryDatabaseBuilder(
+                    ApplicationProvider.getApplicationContext(),
+                    BabyDatabase::class.java,
+                )
+                .allowMainThreadQueries()
+                .build()
+        try {
+            val dao = db.events()
+            val repo = BabyLogRepository(db)
+            fun remote(id: String, start: Long, end: Long? = null, updated: Long = 10000) =
+                mapOf(
+                    "remoteId" to id,
+                    "type" to "SLEEP",
+                    "detail" to "BACK",
+                    "startedAt" to start,
+                    "endedAt" to end,
+                    "updatedAt" to updated,
+                    "sleepRecordVersion" to 1,
+                    "sleepConflict" to (id != "a"),
+                )
+            repo.applyRemote(listOf(remote("a", 1000), remote("b", 1200), remote("c", 1100)))
+            assertEquals(3, dao.allForTest().size)
+            assertTrue(dao.pending().isEmpty())
+            assertEquals(1000L, dao.activeSleep()!!.startedAt)
+            assertEquals(1, dao.sleepSnapshot(0).size)
+            repo.finishSleep(5000)
+            assertNull(dao.activeSleep())
+            assertTrue(dao.allForTest().all { it.endedAt == 5000L })
+            repo.applyRemote(listOf(remote("b", 1200, 4000, Long.MAX_VALUE)))
+            assertEquals(4000L, dao.sleepSnapshot(0).single().endedAt)
+            // Merge before cropping the display window: a later duplicate wake
+            // must not make a sleep spill into the next day.
+            assertTrue(dao.sleepSnapshot(4500).isEmpty())
+            assertNull(dao.activeSleep())
+            repo.beginSleep(6000)
+            assertEquals(6000L, dao.activeSleep()!!.startedAt)
+            val completed = dao.sleepSnapshot(0).first()
+            repo.updateEvent(completed.copy(startedAt = 900, endedAt = 3900))
+            assertTrue(
+                dao.allForTest()
+                    .filter { it.remoteId in setOf("a", "b", "c") }
+                    .all { it.startedAt == 900L && it.endedAt == 3900L }
+            )
+            repo.deleteEvent(dao.sleepSnapshot(0).first())
+            assertEquals(1, dao.allForTest().size)
         } finally {
             db.close()
         }

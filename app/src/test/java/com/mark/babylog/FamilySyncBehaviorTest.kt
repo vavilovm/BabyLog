@@ -130,4 +130,19 @@ class FamilySyncBehaviorTest {
             syncDisplayState(false, 1, success.copy(error = "error")),
         )
     }
+
+    @Test
+    fun missingPushTokenDoesNotFailCompletedDataSync() = runTest {
+        registerPushAfterSync { error("Play Services unavailable") }
+    }
+
+    @Test
+    fun stuckPushRegistrationHasABoundedWaitAndCancellationPropagates() = runTest {
+        registerPushAfterSync { kotlinx.coroutines.awaitCancellation() }
+        assertEquals(5000L, testScheduler.currentTime)
+        try {
+            registerPushAfterSync { throw CancellationException() }
+            fail("Cancellation must propagate")
+        } catch (_: CancellationException) {}
+    }
 }

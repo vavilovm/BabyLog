@@ -3,6 +3,7 @@ package com.mark.babylog.data
 import androidx.room.*
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 enum class EventType {
     FEEDING,
@@ -169,20 +170,31 @@ interface EventDao {
 
     @Upsert suspend fun putProfile(profile: BabyProfile)
 
-    @Query(
-        "SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL AND (endedAt IS NULL OR endedAt >= :since) ORDER BY startedAt"
-    )
-    fun observeSleep(since: Long): Flow<List<BabyEvent>>
+    @Query("SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL ORDER BY startedAt")
+    fun observeRawSleep(): Flow<List<BabyEvent>>
 
-    @Query(
-        "SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL AND (endedAt IS NULL OR endedAt >= :since) ORDER BY startedAt"
-    )
-    suspend fun sleepSnapshot(since: Long): List<BabyEvent>
+    fun observeSleep(since: Long): Flow<List<BabyEvent>> =
+        observeRawSleep().map { events ->
+            SleepConflictResolver.project(events).filter {
+                it.endedAt == null || it.endedAt >= since
+            }
+        }
 
-    @Query(
-        "SELECT * FROM events WHERE type='SLEEP' AND sleepRecordVersion=1 AND endedAt IS NULL AND deletedAt IS NULL AND syncState != 'CONFLICT' ORDER BY startedAt LIMIT 1"
-    )
-    suspend fun activeSleep(): BabyEvent?
+    @Query("SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL ORDER BY startedAt")
+    suspend fun rawSleepSnapshot(): List<BabyEvent>
+
+    suspend fun sleepSnapshot(since: Long): List<BabyEvent> =
+        SleepConflictResolver.project(rawSleepSnapshot()).filter {
+            it.endedAt == null || it.endedAt >= since
+        }
+
+    suspend fun activeSleep(): BabyEvent? =
+        sleepSnapshot(Long.MIN_VALUE).firstOrNull {
+            it.sleepRecordVersion == 1 &&
+                it.endedAt == null &&
+                it.syncState != SyncState.CONFLICT &&
+                it.startedAt <= System.currentTimeMillis()
+        }
 
     @Query("SELECT * FROM events WHERE deletedAt IS NULL ORDER BY startedAt DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<BabyEvent>>
@@ -217,10 +229,7 @@ interface EventDao {
     )
     suspend fun lastFeed(): BabyEvent?
 
-    @Query(
-        "SELECT * FROM events WHERE type='SLEEP' AND deletedAt IS NULL ORDER BY startedAt DESC LIMIT 1"
-    )
-    suspend fun lastSleep(): BabyEvent?
+    suspend fun lastSleep(): BabyEvent? = sleepSnapshot(Long.MIN_VALUE).lastOrNull()
 
     @Query("SELECT * FROM events WHERE id=:id") suspend fun byId(id: Long): BabyEvent?
 

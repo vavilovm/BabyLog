@@ -6,6 +6,20 @@ feeding history, and sleep-position information; none is converted into invented
 sleep durations. Birthday and optional due date are stored in the shared baby
 profile, independently from events.
 
+## Shared sleep records
+
+Overlapping caregiver records with a common sleep window are displayed as one
+session: the earliest start and earliest known wake win. A known wake also bounds
+older open starts, so they cannot swallow the next nap. Chains of completed
+records without one common window, invalid times, and future times require review;
+a card above the sleep timer opens the affected records directly.
+
+Resolution is a deterministic read projection shared by the screen, widgets and
+notifications. Original records remain in local and remote storage so a late
+offline wake can still move the end earlier. Finishing, editing or deleting a
+merged session updates every source record through the existing sync outbox.
+No backend deployment or database migration is required.
+
 ## Evidence and limits
 
 Sleep pressure and circadian rhythms both contribute to infant sleep timing.

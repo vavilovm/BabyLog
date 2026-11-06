@@ -159,7 +159,6 @@ class FamilySync(private val app: BabyLogApp) {
             val success =
                 runFamilySync(status) {
                     auth()
-                    registerCurrentToken()
                     while (true) {
                         val pending = dao.pending()
                         if (pending.isEmpty()) break
@@ -170,6 +169,8 @@ class FamilySync(private val app: BabyLogApp) {
                         .edit()
                         .putLong("last_successful_sync", System.currentTimeMillis())
                         .apply()
+                    // Token registration cannot block sleep uploads from a widget.
+                    registerPushAfterSync { registerCurrentToken() }
                 }
             SyncDiagnostics.record("sync_finish success=$success error=${status.value.error}")
             success
@@ -370,7 +371,9 @@ class FamilySync(private val app: BabyLogApp) {
     }
 
     fun schedule() {
+        // Keep a durable retry if Android stops the widget process.
         SyncWorker.enqueue(app)
+        app.appScope.launch { sync() }
     }
 
     private fun jsonMap(value: JSONObject): Map<String, Any?> =
@@ -501,3 +504,13 @@ internal suspend fun <T> familyResult(block: suspend () -> T): Result<T> =
     } catch (error: Exception) {
         Result.failure(error)
     }
+
+internal suspend fun registerPushAfterSync(register: suspend () -> Unit) {
+    try {
+        withTimeoutOrNull(5_000) { register() }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        Log.w("BabyLog", "Push registration failed; data sync already completed", error)
+    }
+}

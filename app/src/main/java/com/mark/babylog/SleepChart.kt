@@ -93,6 +93,7 @@ internal fun SleepChart(
     var inspection by
         remember(days, zone, initialViewport) { mutableStateOf<Pair<LocalDate, Float>?>(null) }
     var selectedDay by remember(zone, today) { mutableStateOf(today) }
+    var statisticsDay by remember(zone, today) { mutableStateOf<LocalDate?>(null) }
     val validSessions = remember(events, now) { SleepPredictor.validSessions(events, now) }
     val textMeasurer = rememberTextMeasurer()
     val barTextStyle = MaterialTheme.typography.labelSmall
@@ -163,7 +164,10 @@ internal fun SleepChart(
                             selected = selectedDay == day
                             contentDescription = "Итоги сна за ${day.format(dateFormat)}"
                         }
-                        .clickable { selectedDay = day }
+                        .clickable {
+                            selectedDay = day
+                            statisticsDay = day
+                        }
                         .wrapContentHeight(),
                     fontWeight = if (day == today) FontWeight.Bold else FontWeight.Normal,
                     style = MaterialTheme.typography.labelSmall,
@@ -516,6 +520,13 @@ internal fun SleepChart(
                 color = MaterialTheme.colorScheme.tertiary,
             )
         }
+    }
+    statisticsDay?.let { day ->
+        SleepDayStatisticsDialog(
+            sleepDayStatistics(validSessions, day, now, zone),
+            today,
+            onDismiss = { statisticsDay = null },
+        )
     }
 }
 

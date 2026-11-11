@@ -65,6 +65,18 @@ class SleepStatisticsScreenshotTest {
             }
         }
 
+    @Test
+    fun dayDialog() =
+        paparazzi.snapshot {
+            BabyTheme {
+                SleepDayStatisticsDialog(
+                    com.mark.babylog.sleep.sleepDayStatistics(sessions, today, now, zone),
+                    today,
+                    {},
+                )
+            }
+        }
+
     @Test fun light() = snapshot()
 
     @Test fun dark() = snapshot(dark = true)

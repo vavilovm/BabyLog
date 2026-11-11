@@ -2,8 +2,14 @@ package com.mark.babylog
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -11,6 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -20,8 +28,10 @@ import androidx.compose.ui.unit.dp
 import com.mark.babylog.data.BabyEvent
 import com.mark.babylog.sleep.*
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 import kotlin.math.ceil
 
@@ -47,9 +57,26 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                 sleepDayStatistics(sessions, today.minusDays(it.toLong()), now, zone)
             }
         }
-    val week = history.takeLast(7)
+    var weekOffset by rememberSaveable(today.toString()) { mutableIntStateOf(0) }
+    val earliest =
+        sessions.minOfOrNull { Instant.ofEpochMilli(it.startedAt).atZone(zone).toLocalDate() }
+            ?: today
+    val maxOffset = (ChronoUnit.DAYS.between(earliest, today).coerceAtLeast(0) / 7).toInt()
+    val offset = weekOffset.coerceIn(0, maxOffset)
+    val weekEnd = today.minusWeeks(offset.toLong())
+    val week =
+        remember(sessions, now, zone, weekEnd) {
+            (6 downTo 0).map {
+                sleepDayStatistics(sessions, weekEnd.minusDays(it.toLong()), now, zone)
+            }
+        }
     var selectedDate by rememberSaveable(today.toString()) { mutableStateOf(today.toString()) }
     val chosen = week.firstOrNull { it.day.toString() == selectedDate } ?: week.last()
+    fun changeWeek(nextOffset: Int) {
+        val next = nextOffset.coerceIn(0, maxOffset)
+        selectedDate = chosen.day.plusWeeks((offset - next).toLong()).toString()
+        weekOffset = next
+    }
     val average = sleepPeriodAverage(history.drop(7).dropLast(1), today)
     val previous = sleepPeriodAverage(history.take(7), today)
     val dayColor = MaterialTheme.colorScheme.primary
@@ -73,11 +100,58 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                 (ceil((week.maxOfOrNull { it.totalMs } ?: 0).toDouble() / HOUR_MS)
                     .toLong()
                     .coerceAtLeast(1)) * HOUR_MS
-            Text(
-                "Последние 7 дней · шкала до ${scale / HOUR_MS} ч",
-                style = MaterialTheme.typography.labelSmall,
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = { changeWeek(offset + 1) },
+                    enabled = offset < maxOffset,
+                    modifier = Modifier.semantics { contentDescription = "Предыдущая неделя" },
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null)
+                }
+                Text(
+                    "${week.first().day.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))} — ${weekEnd.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                IconButton(
+                    onClick = { changeWeek(offset - 1) },
+                    enabled = offset > 0,
+                    modifier = Modifier.semantics { contentDescription = "Следующая неделя" },
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+                }
+            }
+            if (offset > 0)
+                TextButton(
+                    onClick = {
+                        weekOffset = 0
+                        selectedDate = today.toString()
+                    }
+                ) {
+                    Text("К сегодня")
+                }
+            Text("Шкала до ${scale / HOUR_MS} ч", style = MaterialTheme.typography.labelSmall)
+            Row(
+                Modifier.fillMaxWidth().testTag("sleep-statistics-week").pointerInput(
+                    offset,
+                    maxOffset,
+                    chosen.day,
+                ) {
+                    var distance = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { distance = 0f },
+                        onHorizontalDrag = { change, amount ->
+                            change.consume()
+                            distance += amount
+                        },
+                        onDragEnd = {
+                            if (abs(distance) > 48.dp.toPx())
+                                changeWeek(offset + if (distance > 0) 1 else -1)
+                        },
+                    )
+                },
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 week.forEach { day ->
                     val isChosen = day.day == chosen.day
                     Column(
@@ -87,6 +161,7 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                                 if (isChosen) MaterialTheme.colorScheme.secondaryContainer
                                 else Color.Transparent
                             )
+                            .testTag("sleep-statistics-day-${day.day}")
                             .clickable(role = Role.Button) { selectedDate = day.day.toString() }
                             .semantics(mergeDescendants = true) {
                                 selected = isChosen
@@ -138,55 +213,12 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    if (chosen.day == today) "Сегодня"
-                    else chosen.day.format(DateTimeFormatter.ofPattern("dd.MM")),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (!chosen.hasRecords)
-                    Text("Нет записей", style = MaterialTheme.typography.bodySmall)
-            }
-            if (chosen.hasRecords) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatNumber("Всего", statDuration(chosen.totalMs), Modifier.weight(1f))
-                    StatNumber(
-                        "Днём",
-                        statDuration(chosen.daytimeMs),
-                        Modifier.weight(1f),
-                        dayColor,
-                    )
-                    StatNumber(
-                        "Ночью",
-                        statDuration(chosen.nighttimeMs),
-                        Modifier.weight(1f),
-                        nightColor,
-                    )
-                }
-                StatNumber("Бодрствование", statDuration(chosen.awakeMs), Modifier.fillMaxWidth())
-                HorizontalDivider()
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text("Дневных снов: ${chosen.naps}", style = MaterialTheme.typography.bodySmall)
-                    chosen.averageNapMs?.let {
-                        Text(
-                            "Средний дневной: ${statDuration(it)}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Text(
-                        "Макс. подряд: ${statDuration(chosen.longestMs)}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
+            SleepDayDetails(chosen, today)
             average?.let {
                 HorizontalDivider()
                 Text("В среднем за день", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "${it.days} из 7 завершённых дней с записями",
+                    "${it.days} из последних 7 завершённых дней с записями",
                     style = MaterialTheme.typography.labelSmall,
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -251,4 +283,77 @@ private fun StatNumber(
             color = color,
         )
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SleepDayDetails(chosen: SleepDayStatistics, today: LocalDate) {
+    val dayColor = MaterialTheme.colorScheme.primary
+    val nightColor = MaterialTheme.colorScheme.tertiary
+    Column(
+        Modifier.fillMaxWidth().testTag("sleep-day-details"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                if (chosen.day == today) "Сегодня"
+                else chosen.day.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (!chosen.hasRecords) Text("Нет записей", style = MaterialTheme.typography.bodySmall)
+        }
+        if (chosen.hasRecords) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatNumber("Всего", statDuration(chosen.totalMs), Modifier.weight(1f))
+                StatNumber("Днём", statDuration(chosen.daytimeMs), Modifier.weight(1f), dayColor)
+                StatNumber(
+                    "Ночью",
+                    statDuration(chosen.nighttimeMs),
+                    Modifier.weight(1f),
+                    nightColor,
+                )
+            }
+            StatNumber("Бодрствование", statDuration(chosen.awakeMs), Modifier.fillMaxWidth())
+            HorizontalDivider()
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("Дневных снов: ${chosen.naps}", style = MaterialTheme.typography.bodySmall)
+                chosen.averageNapMs?.let {
+                    Text(
+                        "Средний дневной: ${statDuration(it)}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Text(
+                    "Макс. подряд: ${statDuration(chosen.longestMs)}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SleepDayStatisticsDialog(
+    statistics: SleepDayStatistics,
+    today: LocalDate,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("sleep-day-statistics-dialog"),
+        title = {
+            Text(
+                "Статистика сна · ${statistics.day.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}"
+            )
+        },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                SleepDayDetails(statistics, today)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
+    )
 }

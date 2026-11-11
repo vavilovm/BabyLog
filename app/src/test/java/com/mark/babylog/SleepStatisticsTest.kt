@@ -32,6 +32,7 @@ class SleepStatisticsTest {
         assertEquals(7 * 3_600_000L, today.nighttimeMs)
         assertEquals(2 * 3_600_000L, today.daytimeMs)
         assertEquals(9 * 3_600_000L, today.totalMs)
+        assertEquals(14 * 3_600_000L, today.awakeMs)
         assertEquals(1, today.naps)
         assertEquals(2 * 3_600_000L, today.averageNapMs)
         assertEquals(7 * 3_600_000L, today.longestMs)
@@ -49,6 +50,7 @@ class SleepStatisticsTest {
                 zone,
             )
         assertEquals(3_600_000L, result.daytimeMs)
+        assertEquals(12 * 3_600_000L, result.awakeMs)
         assertEquals(1, result.naps)
         assertEquals(3_600_000L, result.averageNapMs)
     }
@@ -61,6 +63,41 @@ class SleepStatisticsTest {
             sleepDayStatistics(listOf(session), fallback, at(fallback.plusDays(1), 1), zone)
         assertEquals(25 * 3_600_000L, result.totalMs)
         assertEquals(25 * 3_600_000L, result.nighttimeMs)
+        assertEquals(0L, result.awakeMs)
+    }
+
+    @Test
+    fun completedDayAwakeTimeUsesWholeDay() {
+        val result =
+            sleepDayStatistics(
+                listOf(sleep(at(day, 12), at(day, 14))),
+                day,
+                at(day.plusDays(1), 10),
+                zone,
+            )
+        assertEquals(22 * 3_600_000L, result.awakeMs)
+    }
+
+    @Test
+    fun awakeTimeFollowsShortAndLongDstDays() {
+        for ((date, hours) in
+            listOf(LocalDate.of(2026, 3, 29) to 23, LocalDate.of(2026, 10, 25) to 25)) {
+            val result =
+                sleepDayStatistics(
+                    listOf(sleep(at(date, 12), at(date, 14))),
+                    date,
+                    at(date.plusDays(1), 10),
+                    zone,
+                )
+            assertEquals((hours - 2) * 3_600_000L, result.awakeMs)
+        }
+    }
+
+    @Test
+    fun futureDayHasNoElapsedAwakeTime() {
+        val result = sleepDayStatistics(emptyList(), day.plusDays(1), at(day, 13), zone)
+        assertEquals(0L, result.awakeMs)
+        assertFalse(result.hasRecords)
     }
 
     @Test

@@ -13,6 +13,7 @@ data class SleepDayStatistics(
     val longestMs: Long,
     val averageNapMs: Long?,
     val hasRecords: Boolean,
+    val awakeMs: Long,
 ) {
     val totalMs: Long
         get() = daytimeMs + nighttimeMs
@@ -55,6 +56,7 @@ fun sleepDayStatistics(
         longest,
         naps.takeIf { it.isNotEmpty() }?.let { it.sum() / it.size },
         longest > 0,
+        ((end - start).coerceAtLeast(0) - daytime - nighttime).coerceAtLeast(0),
     )
 }
 

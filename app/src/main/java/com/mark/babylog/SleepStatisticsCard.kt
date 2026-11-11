@@ -93,7 +93,7 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                                 contentDescription =
                                     "${day.day.format(DateTimeFormatter.ofPattern("dd.MM"))}: " +
                                         if (day.hasRecords)
-                                            "всего ${statDuration(day.totalMs)}, днём ${statDuration(day.daytimeMs)}, ночью ${statDuration(day.nighttimeMs)}"
+                                            "всего ${statDuration(day.totalMs)}, днём ${statDuration(day.daytimeMs)}, ночью ${statDuration(day.nighttimeMs)}, бодрствование ${statDuration(day.awakeMs)}"
                                         else "нет записей"
                             }
                             .padding(horizontal = 4.dp, vertical = 8.dp),
@@ -163,6 +163,7 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
                         nightColor,
                     )
                 }
+                StatNumber("Бодрствование", statDuration(chosen.awakeMs), Modifier.fillMaxWidth())
                 HorizontalDivider()
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -216,7 +217,7 @@ internal fun SleepTotals(sessions: List<BabyEvent>, now: Long, zone: ZoneId) {
             title = { Text("Статистика сна") },
             text = {
                 Text(
-                    "Дневной сон начинается с 06:00 до 18:00, ночной — в остальное время. Сон через полночь сохраняет свой тип, а длительность распределяется между календарными днями. Текущий сон учитывается до настоящего момента. Средние сравнивают последние 7 завершённых дней с предыдущими 7: дни без записей и незавершённый сегодняшний день исключены. «Макс. подряд» — непрерывный сон внутри выбранного дня."
+                    "Дневной сон начинается с 06:00 до 18:00, ночной — в остальное время. Сон через полночь сохраняет свой тип, а длительность распределяется между календарными днями. Текущий сон учитывается до настоящего момента. Бодрствование — время дня за вычетом сна: для сегодняшнего дня только до текущего момента. Оно показывается для дней с записями; промежутки без записанного сна считаются бодрствованием. Средние сравнивают последние 7 завершённых дней с предыдущими 7: дни без записей и незавершённый сегодняшний день исключены. «Макс. подряд» — непрерывный сон внутри выбранного дня."
                 )
             },
             confirmButton = { TextButton(onClick = { definitions = false }) { Text("Понятно") } },
